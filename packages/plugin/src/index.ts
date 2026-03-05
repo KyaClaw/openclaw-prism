@@ -1,4 +1,5 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { basename, isAbsolute, resolve } from "node:path";
 import { heuristicScan } from "@kyaclaw/shared/heuristics";
 import { auditLog } from "@kyaclaw/shared/audit";
 import type { SessionRisk, ScanVerdict, SecurityConfig } from "@kyaclaw/shared/types";
@@ -77,15 +78,60 @@ function collectPaths(params: Record<string, unknown>): string[] {
     .map(v => v.trim());
 }
 
-function isProtectedPath(p: string, patterns: string[]): boolean {
-  const norm = p.replace(/\\/g, "/");
+function resolveCwd(cwd?: string): string {
+  if (!cwd?.trim()) return "/";
+  const normalized = cwd.trim().replace(/\\/g, "/");
+  return isAbsolute(normalized) ? resolve(normalized) : resolve("/", normalized);
+}
+
+function pathCandidates(pathInput: string, cwd?: string): string[] {
+  const normalized = pathInput.trim().replace(/\\/g, "/");
+  const base = resolveCwd(cwd);
+  const canonical = (isAbsolute(normalized) ? resolve(normalized) : resolve(base, normalized))
+    .replace(/\\/g, "/");
+  return [...new Set([
+    normalized,
+    canonical,
+    basename(normalized),
+    basename(canonical),
+  ].filter(Boolean))];
+}
+
+function isProtectedPath(p: string, patterns: string[], cwd?: string): boolean {
+  const candidates = pathCandidates(p, cwd);
   return patterns.some(pat => {
     const re = new RegExp(
       "^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
       "i",
     );
-    return re.test(norm);
+    return candidates.some((candidate) => re.test(candidate));
   });
+}
+
+function firstExecutable(command: string): string {
+  const tokens = command.trim().split(/\s+/);
+  let idx = 0;
+  while (idx < tokens.length) {
+    const token = tokens[idx]!;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
+      idx++;
+      continue;
+    }
+    if (token === "env") {
+      idx++;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      idx++;
+      continue;
+    }
+    return token.replace(/^.*[\\/]/, "").toLowerCase();
+  }
+  return "";
+}
+
+function hasShellMetacharacters(command: string): boolean {
+  return /[;&|`$()<>]/.test(command);
 }
 
 function extractText(value: unknown, max: number): string {
@@ -119,9 +165,13 @@ async function scanRemote(url: string, text: string, timeoutMs: number): Promise
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
+    const scannerAuthToken = process.env.SCANNER_AUTH_TOKEN ?? "";
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(scannerAuthToken ? { authorization: `Bearer ${scannerAuthToken}` } : {}),
+      },
       body: JSON.stringify({ text }),
       signal: ctrl.signal,
     });
@@ -158,13 +208,15 @@ export default function register(api: OpenClawPluginApi) {
     (cfg.execAllowedPrefixes ?? [
       "node", "npm", "npx", "bun", "bunx", "python3", "python", "pip",
       "git", "gh", "ls", "cat", "head", "tail", "wc", "grep", "find", "which",
-      "echo", "date", "pwd", "env", "docker", "openclaw",
+      "echo", "date", "pwd", "docker", "openclaw",
     ]).map(s => s.toLowerCase()),
   );
   const execBlocked = (cfg.execBlockedPatterns ?? [
     "rm\\s+-rf\\s+/(\\s|$)", "curl\\s+[^|]*\\|\\s*(sh|bash|zsh)",
     "wget\\s+[^|]*\\|\\s*(sh|bash|zsh)", "nc\\s+.*\\s+-e\\s+",
+    "\\b(sh|bash|zsh)\\s+-c\\b",
     "python\\s+-c\\s+.*(socket|subprocess)", "node\\s+-e\\s+.*(child_process|net\\.)",
+    "git\\s+-c\\s+[^\\s]*sshcommand\\s*=",
     "\\bsudo\\b", ">\\/etc\\/", ">\\.ssh\\/",
   ])
     .map(p => {
@@ -238,10 +290,14 @@ export default function register(api: OpenClawPluginApi) {
     if (tool === "exec" || tool === "bash") {
       const command = firstStringParam(params, "command", "cmd", "script");
       if (command) {
-        const firstWord = command.trim().split(/\s+/)[0]?.replace(/^.*\//, "").toLowerCase();
+        if (hasShellMetacharacters(command)) {
+          auditLog({ event: "exec_metachar_block", command: command.slice(0, 200), session: ctx.sessionKey });
+          return { block: true, blockReason: "[security] shell metacharacters are not allowed in exec" };
+        }
+        const firstWord = firstExecutable(command);
 
         // Whitelist check
-        if (!execAllowed.has(firstWord!)) {
+        if (!firstWord || !execAllowed.has(firstWord)) {
           auditLog({ event: "exec_whitelist_block", command: command.slice(0, 200), session: ctx.sessionKey });
           return { block: true, blockReason: `[security] command "${firstWord}" not in whitelist` };
         }
@@ -258,8 +314,9 @@ export default function register(api: OpenClawPluginApi) {
 
     // File path protection
     if (["write", "edit", "apply_patch", "read"].includes(tool)) {
+      const cwd = firstStringParam(params, "cwd");
       for (const p of collectPaths(params)) {
-        if (isProtectedPath(p, protectedPaths)) {
+        if (isProtectedPath(p, protectedPaths, cwd)) {
           auditLog({ event: "path_block", tool, path: p, session: ctx.sessionKey });
           return { block: true, blockReason: `[security] protected path: ${p}` };
         }
@@ -368,5 +425,5 @@ export default function register(api: OpenClawPluginApi) {
 export { riskBySession, getSessionRisk, bumpRisk, sweepExpired, stopSweepTimer };
 export {
   normalizeToolName, firstStringParam, collectPaths,
-  isProtectedPath, extractText, redactMessage,
+  isProtectedPath, firstExecutable, hasShellMetacharacters, extractText, redactMessage,
 };

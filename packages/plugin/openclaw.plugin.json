@@ -27,7 +27,7 @@
         "default": [
           "node", "npm", "npx", "bun", "bunx", "python3", "python", "pip",
           "git", "gh", "ls", "cat", "head", "tail", "wc", "grep", "find", "which",
-          "echo", "date", "pwd", "env", "docker", "openclaw"
+          "echo", "date", "pwd", "docker", "openclaw"
         ]
       },
       "execBlockedPatterns": {
@@ -38,8 +38,10 @@
           "curl\\s+[^|]*\\|\\s*(sh|bash|zsh)",
           "wget\\s+[^|]*\\|\\s*(sh|bash|zsh)",
           "nc\\s+.*\\s+-e\\s+",
+          "\\b(sh|bash|zsh)\\s+-c\\b",
           "python\\s+-c\\s+.*(socket|subprocess)",
           "node\\s+-e\\s+.*(child_process|net\\.)",
+          "git\\s+-c\\s+[^\\s]*sshcommand\\s*=",
           "\\bsudo\\b", ">\\/etc\\/", ">\\.ssh\\/"
         ]
       },

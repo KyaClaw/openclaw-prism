@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import http from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 // ── Policy types ──
 type ClientPolicy = {
@@ -51,11 +52,24 @@ function readBearer(req: http.IncomingMessage): string {
   return raw.slice(7).trim();
 }
 
+function digestToken(token: string): Buffer {
+  return createHash("sha256").update(token, "utf8").digest();
+}
+
+function constantTimeTokenEqual(left: string, right: string): boolean {
+  const leftDigest = digestToken(left);
+  const rightDigest = digestToken(right);
+  return timingSafeEqual(leftDigest, rightDigest);
+}
+
 function getClientByToken(clients: ClientPolicy[], token: string): ClientPolicy | null {
+  let matched: ClientPolicy | null = null;
   for (const c of clients) {
-    if (c.token === token) return c;
+    if (constantTimeTokenEqual(c.token, token) && !matched) {
+      matched = c;
+    }
   }
-  return null;
+  return matched;
 }
 
 function isSessionAllowed(sessionKey: string, prefixes: string[]): boolean {
@@ -95,13 +109,17 @@ async function scanResultText(
   scannerUrl: string,
   text: string,
   timeoutMs: number,
+  scannerAuthToken?: string,
 ): Promise<{ verdict: string; reasons: string[] }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resp = await fetch(scannerUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(scannerAuthToken ? { authorization: `Bearer ${scannerAuthToken}` } : {}),
+      },
       body: JSON.stringify({ text }),
       signal: controller.signal,
     });
@@ -237,6 +255,7 @@ export function createServer(policyOverride?: Policy) {
               policy.scannerUrl,
               text,
               policy.scannerTimeoutMs ?? 1200,
+              process.env.SCANNER_AUTH_TOKEN ?? "",
             );
             if (verdict.verdict === "malicious") {
               return json(res, 409, {

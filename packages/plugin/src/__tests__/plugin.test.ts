@@ -12,6 +12,8 @@ import register, {
   firstStringParam,
   collectPaths,
   isProtectedPath,
+  firstExecutable,
+  hasShellMetacharacters,
   extractText,
   redactMessage,
 } from "../index.js";
@@ -73,6 +75,20 @@ describe("plugin utilities", () => {
     expect(isProtectedPath("/tmp/safe", ["/etc/*"])).toBe(false);
     expect(isProtectedPath("foo.env", ["*.env"])).toBe(true);
     expect(isProtectedPath("SOUL.md", ["SOUL.md"])).toBe(true);
+    expect(isProtectedPath("/etc/../root/.ssh/id_rsa", ["/root/*"])).toBe(true);
+    expect(isProtectedPath("./openclaw.json", ["openclaw.json"], "/home/user/.openclaw/workspace")).toBe(true);
+  });
+
+  it("firstExecutable skips env and assignments", () => {
+    expect(firstExecutable("git status")).toBe("git");
+    expect(firstExecutable("FOO=1 git status")).toBe("git");
+    expect(firstExecutable("env -i FOO=1 git status")).toBe("git");
+    expect(firstExecutable("env -i bash -c id")).toBe("bash");
+  });
+
+  it("hasShellMetacharacters detects shell control chars", () => {
+    expect(hasShellMetacharacters("git status")).toBe(false);
+    expect(hasShellMetacharacters("git status && whoami")).toBe(true);
   });
 
   it("extractText handles string content", () => {
@@ -188,7 +204,7 @@ describe("plugin hook registration", () => {
       { sessionKey: "s1", toolName: "exec" },
     );
     expect(result?.block).toBe(true);
-    expect(result?.blockReason).toContain("not in whitelist");
+    expect(result?.blockReason).toContain("shell metacharacters");
   });
 
   it("before_tool_call allows whitelisted exec", () => {
@@ -208,13 +224,43 @@ describe("plugin hook registration", () => {
       { sessionKey: "s1", toolName: "exec" },
     );
     expect(result?.block).toBe(true);
-    expect(result?.blockReason).toContain("blocked dangerous pattern");
+    expect(result?.blockReason).toContain("shell metacharacters");
+  });
+
+  it("before_tool_call blocks env-wrapped shell execution", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "exec", params: { command: "env -i bash -c whoami" } },
+      { sessionKey: "s1", toolName: "exec" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("not in whitelist");
+  });
+
+  it("before_tool_call blocks shell metacharacters", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "exec", params: { command: "git status && whoami" } },
+      { sessionKey: "s1", toolName: "exec" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("shell metacharacters");
   });
 
   it("before_tool_call blocks protected path writes", () => {
     const handler = getHook(hooks, "before_tool_call");
     const result = handler(
       { toolName: "write", params: { path: "/etc/passwd" } },
+      { sessionKey: "s1", toolName: "write" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("protected path");
+  });
+
+  it("before_tool_call blocks traversal into protected paths", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "write", params: { path: "/etc/../root/.ssh/id_rsa" } },
       { sessionKey: "s1", toolName: "write" },
     );
     expect(result?.block).toBe(true);

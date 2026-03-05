@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import http from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { heuristicScan } from "@kyaclaw/shared/heuristics";
 
 const HOST = process.env.SCANNER_HOST ?? "127.0.0.1";
@@ -13,6 +14,24 @@ function json(res: http.ServerResponse, status: number, payload: unknown) {
   res.statusCode = status;
   res.setHeader("content-type", "application/json; charset=utf-8");
   res.end(JSON.stringify(payload));
+}
+
+function readBearer(req: http.IncomingMessage): string {
+  const raw = String(req.headers["authorization"] ?? "");
+  if (!raw.toLowerCase().startsWith("bearer ")) return "";
+  return raw.slice(7).trim();
+}
+
+function digestToken(token: string): Buffer {
+  return createHash("sha256").update(token, "utf8").digest();
+}
+
+function tokenMatches(expected: string, provided: string): boolean {
+  return timingSafeEqual(digestToken(expected), digestToken(provided));
+}
+
+function getScannerAuthToken(): string {
+  return process.env.SCANNER_AUTH_TOKEN ?? "";
 }
 
 async function ollamaJudge(
@@ -85,6 +104,14 @@ export function createServer() {
       return json(res, 200, { ok: true });
     if (req.method !== "POST" || req.url !== "/scan")
       return json(res, 404, { error: "not found" });
+    const scannerAuthToken = getScannerAuthToken();
+    if (!scannerAuthToken) {
+      return json(res, 503, { error: "SCANNER_AUTH_TOKEN is required" });
+    }
+    const providedToken = readBearer(req);
+    if (!providedToken || !tokenMatches(scannerAuthToken, providedToken)) {
+      return json(res, 401, { error: "unauthorized" });
+    }
 
     let raw = "";
     req.setEncoding("utf8");
@@ -107,6 +134,10 @@ export function createServer() {
 // Start server when run directly
 const isMainModule = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""));
 if (isMainModule || process.env.KYACLAW_SCANNER_START) {
+  if (!getScannerAuthToken()) {
+    process.stderr.write("[scanner] SCANNER_AUTH_TOKEN is required\n");
+    process.exit(1);
+  }
   const server = createServer();
   server.listen(PORT, HOST, () => {
     process.stdout.write(`[scanner] http://${HOST}:${PORT}\n`);

@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
-import { verifyAuditEntry } from "@kyaclaw/shared/audit";
+import { verifyAuditChain } from "@kyaclaw/shared/audit";
 
 // Auto-load .env from install directory
 const INSTALL_DIR = "/opt/openclaw-prism";
@@ -166,22 +166,17 @@ audit
 
 audit
   .command("verify")
-  .description("Verify HMAC integrity of audit log entries")
+  .description("Verify audit integrity (HMAC + chain continuity)")
   .action(() => {
     if (!existsSync(AUDIT_LOG)) {
       process.stdout.write("No audit log found.\n");
       return;
     }
     const lines = readFileSync(AUDIT_LOG, "utf8").trim().split("\n");
-    let valid = 0;
-    let invalid = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (verifyAuditEntry(lines[i]!)) {
-        valid++;
-      } else {
-        invalid++;
-        process.stderr.write(`[audit] INVALID entry at line ${i + 1}\n`);
-      }
+    const result = verifyAuditChain(lines);
+    const { valid, invalid, firstInvalidLine } = result;
+    if (firstInvalidLine !== null) {
+      process.stderr.write(`[audit] INVALID chain at line ${firstInvalidLine}\n`);
     }
     process.stdout.write(`[audit] ${valid} valid, ${invalid} invalid out of ${lines.length} entries\n`);
     if (invalid > 0) process.exitCode = 1;

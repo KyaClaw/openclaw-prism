@@ -73,6 +73,7 @@ ENV_FILE="$INSTALL_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
   HMAC_KEY=$(openssl rand -hex 32)
   PROXY_TOKEN=$(openssl rand -hex 32)
+  SCANNER_TOKEN=$(openssl rand -hex 32)
 
   # Auto-detect gateway token from openclaw.json
   GATEWAY_TOKEN=""
@@ -102,6 +103,7 @@ KYACLAW_PROXY_CLIENT_TOKEN=$PROXY_TOKEN
 # Scanner config
 SCANNER_HOST=127.0.0.1
 SCANNER_PORT=18766
+SCANNER_AUTH_TOKEN=$SCANNER_TOKEN
 OLLAMA_URL=http://127.0.0.1:11434/api/generate
 OLLAMA_MODEL=qwen3:30b
 
@@ -131,6 +133,11 @@ else
     else
       echo "  WARNING: Gateway token still set to placeholder."
     fi
+  fi
+  if ! grep -q "^SCANNER_AUTH_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+    SCANNER_TOKEN=$(openssl rand -hex 32)
+    echo "SCANNER_AUTH_TOKEN=$SCANNER_TOKEN" >> "$ENV_FILE"
+    echo "  Added missing SCANNER_AUTH_TOKEN."
   fi
 fi
 

@@ -18,8 +18,10 @@
     "curl\\s+[^|]*\\|\\s*(sh|bash|zsh)",
     "wget\\s+[^|]*\\|\\s*(sh|bash|zsh)",
     "nc\\s+.*\\s+-e\\s+",
+    "\\b(sh|bash|zsh)\\s+-c\\b",
     "python\\s+-c\\s+.*(socket|subprocess)",
     "node\\s+-e\\s+.*(child_process|net\\.)",
+    "git\\s+-c\\s+[^\\s]*sshcommand\\s*=",
     "\\bsudo\\b"
   ],
   "scannerUrl": "http://127.0.0.1:18766/scan",
