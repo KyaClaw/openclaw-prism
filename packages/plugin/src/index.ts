@@ -108,26 +108,173 @@ function isProtectedPath(p: string, patterns: string[], cwd?: string): boolean {
   });
 }
 
-function firstExecutable(command: string): string {
-  const tokens = command.trim().split(/\s+/);
-  let idx = 0;
-  while (idx < tokens.length) {
-    const token = tokens[idx]!;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) {
-      idx++;
+type ParsedExecCommand = {
+  tokens: string[];
+  executable: string;
+  argv: string[];
+  assignments: string[];
+};
+
+const SHELL_TRAMPOLINES = new Set([
+  "sh", "bash", "zsh", "dash", "ksh", "fish", "cmd", "powershell", "pwsh",
+]);
+const INLINE_INTERPRETER_FLAGS = new Map<string, Set<string>>([
+  ["node", new Set(["-e", "--eval", "-p", "--print"])],
+  ["python", new Set(["-c"])],
+  ["python3", new Set(["-c"])],
+  ["perl", new Set(["-e"])],
+  ["ruby", new Set(["-e"])],
+  ["php", new Set(["-r"])],
+  ["lua", new Set(["-e"])],
+]);
+
+function tokenizeCommand(command: string): string[] | null {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | "\"" | null = null;
+  let escaping = false;
+
+  for (const ch of command) {
+    if (escaping) {
+      current += ch;
+      escaping = false;
       continue;
     }
-    if (token === "env") {
-      idx++;
+
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      else current += ch;
       continue;
     }
-    if (token.startsWith("-")) {
-      idx++;
+
+    if (quote === "\"") {
+      if (ch === "\"") {
+        quote = null;
+      } else if (ch === "\\") {
+        escaping = true;
+      } else {
+        current += ch;
+      }
       continue;
     }
-    return token.replace(/^.*[\\/]/, "").toLowerCase();
+
+    if (ch === "'" || ch === "\"") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += ch;
   }
-  return "";
+
+  if (escaping) current += "\\";
+  if (quote) return null;
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function isEnvAssignment(token: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token);
+}
+
+function parseExecCommand(command: string): ParsedExecCommand | null {
+  const tokens = tokenizeCommand(command);
+  if (!tokens?.length) return null;
+
+  let idx = 0;
+  const assignments: string[] = [];
+
+  while (idx < tokens.length && isEnvAssignment(tokens[idx]!)) {
+    assignments.push(tokens[idx]!);
+    idx++;
+  }
+
+  const maybeEnv = tokens[idx];
+  if (maybeEnv && maybeEnv.replace(/^.*[\\/]/, "").toLowerCase() === "env") {
+    idx++;
+    while (idx < tokens.length) {
+      const token = tokens[idx]!;
+      if (token === "--") {
+        idx++;
+        break;
+      }
+      if (token.startsWith("-")) {
+        idx++;
+        continue;
+      }
+      if (isEnvAssignment(token)) {
+        assignments.push(token);
+        idx++;
+        continue;
+      }
+      break;
+    }
+  }
+
+  while (idx < tokens.length && isEnvAssignment(tokens[idx]!)) {
+    assignments.push(tokens[idx]!);
+    idx++;
+  }
+
+  if (idx >= tokens.length) {
+    return { tokens, executable: "", argv: [], assignments };
+  }
+
+  return {
+    tokens,
+    executable: tokens[idx]!.replace(/^.*[\\/]/, "").toLowerCase(),
+    argv: tokens.slice(idx + 1),
+    assignments,
+  };
+}
+
+function hasGitSshOverride(parsed: ParsedExecCommand): boolean {
+  if (parsed.assignments.some((entry) => entry.split("=")[0]?.toLowerCase() === "git_ssh_command")) {
+    return true;
+  }
+  if (parsed.executable !== "git") return false;
+
+  for (let i = 0; i < parsed.argv.length; i++) {
+    const arg = parsed.argv[i]!;
+    const lower = arg.toLowerCase();
+    if (arg === "-c") {
+      const next = parsed.argv[i + 1]?.toLowerCase() ?? "";
+      if (next.startsWith("core.sshcommand=")) return true;
+      continue;
+    }
+    if (lower.startsWith("-ccore.sshcommand=") || lower.startsWith("--config-env=core.sshcommand")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function execTrampolineReason(command: string): string | null {
+  const parsed = parseExecCommand(command);
+  if (!parsed || !parsed.executable) return "unable to parse executable";
+  if (SHELL_TRAMPOLINES.has(parsed.executable)) return `shell trampoline blocked (${parsed.executable})`;
+
+  const inlineFlags = INLINE_INTERPRETER_FLAGS.get(parsed.executable);
+  if (inlineFlags && parsed.argv.some((arg) => inlineFlags.has(arg.toLowerCase()))) {
+    return `inline code trampoline blocked (${parsed.executable})`;
+  }
+
+  if (hasGitSshOverride(parsed)) return "git ssh trampoline blocked";
+  return null;
+}
+
+function firstExecutable(command: string): string {
+  return parseExecCommand(command)?.executable ?? "";
 }
 
 function hasShellMetacharacters(command: string): boolean {
@@ -294,6 +441,11 @@ export default function register(api: OpenClawPluginApi) {
           auditLog({ event: "exec_metachar_block", command: command.slice(0, 200), session: ctx.sessionKey });
           return { block: true, blockReason: "[security] shell metacharacters are not allowed in exec" };
         }
+        const trampolineReason = execTrampolineReason(command);
+        if (trampolineReason) {
+          auditLog({ event: "exec_trampoline_block", reason: trampolineReason, session: ctx.sessionKey });
+          return { block: true, blockReason: `[security] ${trampolineReason}` };
+        }
         const firstWord = firstExecutable(command);
 
         // Whitelist check
@@ -425,5 +577,6 @@ export default function register(api: OpenClawPluginApi) {
 export { riskBySession, getSessionRisk, bumpRisk, sweepExpired, stopSweepTimer };
 export {
   normalizeToolName, firstStringParam, collectPaths,
-  isProtectedPath, firstExecutable, hasShellMetacharacters, extractText, redactMessage,
+  isProtectedPath, parseExecCommand, firstExecutable, execTrampolineReason,
+  hasShellMetacharacters, extractText, redactMessage,
 };
