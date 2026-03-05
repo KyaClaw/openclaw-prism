@@ -23,8 +23,8 @@ type HookHandler = (...args: any[]) => any;
 function createMockApi(pluginConfig: Record<string, unknown> = {}) {
   const hooks = new Map<string, HookHandler[]>();
   const api = {
-    id: "kyaclaw-security",
-    name: "KyaClaw PRISM",
+    id: "prism-security",
+    name: "PRISM",
     source: "test",
     config: {},
     pluginConfig,

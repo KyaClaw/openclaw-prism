@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── KyaClaw PRISM Installer ──
+# ── PRISM Installer ──
 # Run on the OpenClaw server: bash install.sh (do NOT run with sudo)
 
 # Resolve real user home even if run via sudo
@@ -18,7 +18,7 @@ EXTENSIONS_DIR="$OPENCLAW_DIR/extensions"
 SECURITY_DIR="$OPENCLAW_DIR/security"
 
 echo "╔══════════════════════════════════════╗"
-echo "║  KyaClaw PRISM Installer v0.1.0     ║"
+echo "║  PRISM Installer v0.1.0             ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 
@@ -93,12 +93,12 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
 
   cat > "$ENV_FILE" <<EOF
-# KyaClaw PRISM secrets — generated on $(date -Iseconds)
+# PRISM secrets — generated on $(date -Iseconds)
 OPENCLAW_AUDIT_HMAC_KEY=$HMAC_KEY
 OPENCLAW_GATEWAY_TOKEN=$GATEWAY_TOKEN
 
 # Proxy client token (put this in your API client config)
-KYACLAW_PROXY_CLIENT_TOKEN=$PROXY_TOKEN
+PRISM_PROXY_CLIENT_TOKEN=$PROXY_TOKEN
 
 # Scanner config
 SCANNER_HOST=127.0.0.1
@@ -145,7 +145,7 @@ fi
 echo "[5/7] Linking plugin to OpenClaw..."
 
 mkdir -p "$EXTENSIONS_DIR"
-PLUGIN_LINK="$EXTENSIONS_DIR/kyaclaw-security"
+PLUGIN_LINK="$EXTENSIONS_DIR/prism-security"
 
 if [ -L "$PLUGIN_LINK" ] || [ -d "$PLUGIN_LINK" ]; then
   rm -rf "$PLUGIN_LINK"
@@ -155,24 +155,24 @@ echo "  Linked: $PLUGIN_LINK -> $INSTALL_DIR/packages/plugin"
 
 # Add to OpenClaw plugins.allow if openclaw.json exists
 if [ -f "$OPENCLAW_JSON" ]; then
-  if ! grep -q "kyaclaw-security" "$OPENCLAW_JSON" 2>/dev/null; then
+  if ! grep -q "prism-security" "$OPENCLAW_JSON" 2>/dev/null; then
     BACKUP="${OPENCLAW_JSON}.backup.$(date +%Y%m%d_%H%M%S)"
     cp "$OPENCLAW_JSON" "$BACKUP"
     echo "  Backed up openclaw.json to $BACKUP"
-    echo "  Adding kyaclaw-security to plugins.allow..."
+    echo "  Adding prism-security to plugins.allow..."
     node -e "
       const fs = require('fs');
       const cfg = JSON.parse(fs.readFileSync('$OPENCLAW_JSON', 'utf8'));
       if (!cfg.plugins) cfg.plugins = {};
       if (!Array.isArray(cfg.plugins.allow)) cfg.plugins.allow = [];
-      if (!cfg.plugins.allow.includes('kyaclaw-security')) {
-        cfg.plugins.allow.push('kyaclaw-security');
+      if (!cfg.plugins.allow.includes('prism-security')) {
+        cfg.plugins.allow.push('prism-security');
         fs.writeFileSync('$OPENCLAW_JSON', JSON.stringify(cfg, null, 2) + '\n');
-        process.stdout.write('  Added kyaclaw-security to plugins.allow\n');
+        process.stdout.write('  Added prism-security to plugins.allow\n');
       }
     "
   else
-    echo "  kyaclaw-security already in plugins.allow"
+    echo "  prism-security already in plugins.allow"
   fi
 else
   echo "  WARNING: $OPENCLAW_JSON not found, skipping plugins.allow"
@@ -187,23 +187,23 @@ if [ -d /etc/systemd/system ] && command -v systemctl &>/dev/null; then
   echo "  Installing systemd services..."
 
   RUN_USER="$(whoami)"
-  for svc in kyaclaw-scanner kyaclaw-proxy kyaclaw-monitor; do
+  for svc in prism-scanner prism-proxy prism-monitor; do
     sudo cp "$INSTALL_DIR/systemd/${svc}.service" /etc/systemd/system/
     # Replace user placeholder and inject environment file
-    sudo sed -i "s/__KYACLAW_USER__/$RUN_USER/" "/etc/systemd/system/${svc}.service"
+    sudo sed -i "s/__PRISM_USER__/$RUN_USER/" "/etc/systemd/system/${svc}.service"
     sudo sed -i "/\[Service\]/a EnvironmentFile=$ENV_FILE" "/etc/systemd/system/${svc}.service" 2>/dev/null || true
   done
 
   sudo systemctl daemon-reload
-  sudo systemctl enable kyaclaw-scanner kyaclaw-proxy kyaclaw-monitor
-  sudo systemctl start kyaclaw-scanner kyaclaw-proxy kyaclaw-monitor
+  sudo systemctl enable prism-scanner prism-proxy prism-monitor
+  sudo systemctl start prism-scanner prism-proxy prism-monitor
 
   echo "  Services started."
 
 elif [ "$(uname)" = "Darwin" ]; then
   echo "  macOS detected. To install launchd services:"
   echo "    cp $INSTALL_DIR/launchd/*.plist ~/Library/LaunchAgents/"
-  echo "    launchctl load ~/Library/LaunchAgents/com.kyaclaw.*.plist"
+  echo "    launchctl load ~/Library/LaunchAgents/com.prism.*.plist"
   echo ""
   echo "  Or run manually:"
   echo "    source $ENV_FILE && npx tsx $INSTALL_DIR/packages/scanner/src/index.ts &"

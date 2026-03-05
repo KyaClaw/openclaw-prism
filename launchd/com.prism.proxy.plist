@@ -3,18 +3,18 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.kyaclaw.monitor</string>
+  <string>com.prism.proxy</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
     <string>--enable-source-maps</string>
-    <string>/opt/openclaw-prism/packages/monitor/dist/index.js</string>
+    <string>/opt/openclaw-prism/packages/proxy/dist/index.js</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>OPENCLAW_AUDIT_HMAC_KEY</key>
-    <string>replace-with-secure-random-key</string>
-    <key>KYACLAW_MONITOR_START</key>
+    <key>INVOKE_GUARD_POLICY</key>
+    <string>/opt/openclaw-prism/config/invoke-guard.policy.json</string>
+    <key>PRISM_PROXY_START</key>
     <string>1</string>
   </dict>
   <key>RunAtLoad</key>
@@ -22,8 +22,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/tmp/kyaclaw-monitor.log</string>
+  <string>/tmp/prism-proxy.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/kyaclaw-monitor.err</string>
+  <string>/tmp/prism-proxy.err</string>
 </dict>
 </plist>

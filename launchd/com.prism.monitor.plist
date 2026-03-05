@@ -3,20 +3,18 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.kyaclaw.scanner</string>
+  <string>com.prism.monitor</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
     <string>--enable-source-maps</string>
-    <string>/opt/openclaw-prism/packages/scanner/dist/index.js</string>
+    <string>/opt/openclaw-prism/packages/monitor/dist/index.js</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>SCANNER_HOST</key>
-    <string>127.0.0.1</string>
-    <key>SCANNER_PORT</key>
-    <string>18766</string>
-    <key>KYACLAW_SCANNER_START</key>
+    <key>OPENCLAW_AUDIT_HMAC_KEY</key>
+    <string>replace-with-secure-random-key</string>
+    <key>PRISM_MONITOR_START</key>
     <string>1</string>
   </dict>
   <key>RunAtLoad</key>
@@ -24,8 +22,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/tmp/kyaclaw-scanner.log</string>
+  <string>/tmp/prism-monitor.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/kyaclaw-scanner.err</string>
+  <string>/tmp/prism-monitor.err</string>
 </dict>
 </plist>

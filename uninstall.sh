@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── KyaClaw PRISM Uninstaller ──
+# ── PRISM Uninstaller ──
 # Run on the OpenClaw server: bash uninstall.sh (do NOT run with sudo)
 
 # Resolve real user home even if run via sudo
@@ -16,16 +16,16 @@ OPENCLAW_DIR="$REAL_HOME/.openclaw"
 OPENCLAW_JSON="$OPENCLAW_DIR/openclaw.json"
 EXTENSIONS_DIR="$OPENCLAW_DIR/extensions"
 SECURITY_DIR="$OPENCLAW_DIR/security"
-PLUGIN_LINK="$EXTENSIONS_DIR/kyaclaw-security"
+PLUGIN_LINK="$EXTENSIONS_DIR/prism-security"
 
 echo "╔══════════════════════════════════════╗"
-echo "║  KyaClaw PRISM Uninstaller          ║"
+echo "║  PRISM Uninstaller                  ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
 echo "This will remove:"
 echo "  - Systemd/launchd services"
 echo "  - Plugin symlink ($PLUGIN_LINK)"
-echo "  - kyaclaw-security from plugins.allow in openclaw.json"
+echo "  - prism-security from plugins.allow in openclaw.json"
 echo "  - Installation directory ($INSTALL_DIR)"
 echo "  - Audit logs ($SECURITY_DIR) (optional)"
 echo ""
@@ -39,7 +39,7 @@ fi
 echo "[1/6] Stopping services..."
 
 if command -v systemctl &>/dev/null; then
-  for svc in kyaclaw-scanner kyaclaw-proxy kyaclaw-monitor; do
+  for svc in prism-scanner prism-proxy prism-monitor; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
       sudo systemctl stop "$svc"
       echo "  Stopped $svc"
@@ -55,7 +55,7 @@ fi
 
 # ── 2. Remove launchd services (macOS) ──
 if [ "$(uname)" = "Darwin" ]; then
-  for plist in com.kyaclaw.scanner com.kyaclaw.proxy com.kyaclaw.monitor; do
+  for plist in com.prism.scanner com.prism.proxy com.prism.monitor; do
     PLIST_PATH="$REAL_HOME/Library/LaunchAgents/${plist}.plist"
     if [ -f "$PLIST_PATH" ]; then
       launchctl unload "$PLIST_PATH" 2>/dev/null || true
@@ -75,10 +75,10 @@ else
   echo "  No plugin link found."
 fi
 
-# ── 4. Remove kyaclaw-security from plugins.allow ──
+# ── 4. Remove prism-security from plugins.allow ──
 echo "[3/6] Cleaning openclaw.json..."
 
-if [ -f "$OPENCLAW_JSON" ] && grep -q "kyaclaw-security" "$OPENCLAW_JSON" 2>/dev/null; then
+if [ -f "$OPENCLAW_JSON" ] && grep -q "prism-security" "$OPENCLAW_JSON" 2>/dev/null; then
   BACKUP="${OPENCLAW_JSON}.backup.$(date +%Y%m%d_%H%M%S)"
   cp "$OPENCLAW_JSON" "$BACKUP"
   echo "  Backed up openclaw.json to $BACKUP"
@@ -86,14 +86,14 @@ if [ -f "$OPENCLAW_JSON" ] && grep -q "kyaclaw-security" "$OPENCLAW_JSON" 2>/dev
     const fs = require('fs');
     const cfg = JSON.parse(fs.readFileSync('$OPENCLAW_JSON', 'utf8'));
     if (cfg.plugins && Array.isArray(cfg.plugins.allow)) {
-      cfg.plugins.allow = cfg.plugins.allow.filter(p => p !== 'kyaclaw-security');
+      cfg.plugins.allow = cfg.plugins.allow.filter(p => p !== 'prism-security');
       if (cfg.plugins.allow.length === 0) delete cfg.plugins.allow;
       fs.writeFileSync('$OPENCLAW_JSON', JSON.stringify(cfg, null, 2) + '\n');
-      process.stdout.write('  Removed kyaclaw-security from plugins.allow\n');
+      process.stdout.write('  Removed prism-security from plugins.allow\n');
     }
   "
 else
-  echo "  No kyaclaw-security found in openclaw.json"
+  echo "  No prism-security found in openclaw.json"
 fi
 
 # ── 5. Remove audit logs and security data ──
@@ -124,7 +124,7 @@ fi
 # ── 7. Kill any remaining processes ──
 echo "[6/6] Cleaning up processes..."
 
-for pattern in "kyaclaw-scanner" "kyaclaw-proxy" "kyaclaw-monitor" "KYACLAW_SCANNER_START" "KYACLAW_PROXY_START" "KYACLAW_MONITOR_START"; do
+for pattern in "prism-scanner" "prism-proxy" "prism-monitor" "PRISM_SCANNER_START" "PRISM_PROXY_START" "PRISM_MONITOR_START"; do
   pids=$(pgrep -f "$pattern" 2>/dev/null || true)
   if [ -n "$pids" ]; then
     echo "  Killing remaining processes: $pids"
@@ -134,7 +134,7 @@ done
 
 echo ""
 echo "════════════════════════════════════════"
-echo "  KyaClaw PRISM uninstalled."
+echo "  PRISM uninstalled."
 echo "════════════════════════════════════════"
 
 # ── Restart OpenClaw gateway ──

@@ -295,7 +295,7 @@ export function createServer(policyOverride?: Policy) {
 // Start server when run directly
 const isMainModule =
   process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""));
-if (isMainModule || process.env.KYACLAW_PROXY_START) {
+if (isMainModule || process.env.PRISM_PROXY_START) {
   const policy = loadPolicy();
   const { server, reloadPolicy } = createServer(policy);
   server.listen(policy.port, policy.host, () => {

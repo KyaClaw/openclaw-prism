@@ -133,7 +133,7 @@ export function createServer() {
 
 // Start server when run directly
 const isMainModule = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""));
-if (isMainModule || process.env.KYACLAW_SCANNER_START) {
+if (isMainModule || process.env.PRISM_SCANNER_START) {
   if (!getScannerAuthToken()) {
     process.stderr.write("[scanner] SCANNER_AUTH_TOKEN is required\n");
     process.exit(1);

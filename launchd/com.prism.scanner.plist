@@ -3,18 +3,20 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.kyaclaw.proxy</string>
+  <string>com.prism.scanner</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
     <string>--enable-source-maps</string>
-    <string>/opt/openclaw-prism/packages/proxy/dist/index.js</string>
+    <string>/opt/openclaw-prism/packages/scanner/dist/index.js</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>INVOKE_GUARD_POLICY</key>
-    <string>/opt/openclaw-prism/config/invoke-guard.policy.json</string>
-    <key>KYACLAW_PROXY_START</key>
+    <key>SCANNER_HOST</key>
+    <string>127.0.0.1</string>
+    <key>SCANNER_PORT</key>
+    <string>18766</string>
+    <key>PRISM_SCANNER_START</key>
     <string>1</string>
   </dict>
   <key>RunAtLoad</key>
@@ -22,8 +24,8 @@
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/tmp/kyaclaw-proxy.log</string>
+  <string>/tmp/prism-scanner.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/kyaclaw-proxy.err</string>
+  <string>/tmp/prism-scanner.err</string>
 </dict>
 </plist>

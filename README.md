@@ -73,7 +73,7 @@ Critical files are watched via `chokidar` events **plus** periodic SHA-256 recon
 </td>
 <td>
 
-### :test_tube: 67 Tests — 1:1 Test-to-Source Ratio
+### :test_tube: 75 Tests — 1:1 Test-to-Source Ratio
 
 Every security-critical path is tested: hook registration, risk thresholds, cross-session isolation, tool blocking, token auth, session ownership, exec patterns, and audit HMAC verification. Tests use proper mocking, boundary-condition checks, and both positive and negative cases.
 
@@ -87,7 +87,7 @@ PRISM runs as one OpenClaw plugin plus three sidecar services:
 
 | Component | Type | Purpose | Port |
 | --- | --- | --- | --- |
-| `kyaclaw-security` plugin | OpenClaw extension | Hooks message/tool lifecycle, enforces risk-based blocks, DLP, and path protection | — |
+| `prism-security` plugin | OpenClaw extension | Hooks message/tool lifecycle, enforces risk-based blocks, DLP, and path protection | — |
 | Injection scanner | HTTP daemon | Heuristic + optional Ollama classification for injection risk | `18766` |
 | Invoke Guard proxy | HTTP daemon | `/tools/invoke` auth + policy enforcement + sanitized forward | `18767` |
 | File monitor | Background daemon | Detects unauthorized changes for critical files, writes signed audit events | — |
@@ -173,7 +173,7 @@ Installer behavior:
 - syncs code to `/opt/openclaw-prism`
 - installs deps and builds all packages
 - generates `.env` secrets on first install
-- links plugin to `~/.openclaw/extensions/kyaclaw-security`
+- links plugin to `~/.openclaw/extensions/prism-security`
 - updates `plugins.allow` in `openclaw.json` (with backup)
 - Linux + systemd: installs and starts services automatically
 - macOS: prints launchd/manual startup commands
@@ -215,7 +215,7 @@ Generated at `/opt/openclaw-prism/.env`.
 Important variables:
 - `OPENCLAW_AUDIT_HMAC_KEY`
 - `OPENCLAW_GATEWAY_TOKEN`
-- `KYACLAW_PROXY_CLIENT_TOKEN`
+- `PRISM_PROXY_CLIENT_TOKEN`
 - `SCANNER_HOST`, `SCANNER_PORT`, `SCANNER_AUTH_TOKEN`
 - `OLLAMA_URL`, `OLLAMA_MODEL`
 - `INVOKE_GUARD_POLICY`
@@ -235,25 +235,25 @@ Controls:
 
 Schema is declared in [`packages/plugin/openclaw.plugin.json`](/Users/kyaky/Documents/Playground/openclaw-prism/packages/plugin/openclaw.plugin.json).
 
-You can tune risk TTL, scan tools, protected paths, exec allow/block lists, and outbound secret patterns through OpenClaw plugin config for `kyaclaw-security`.
+You can tune risk TTL, scan tools, protected paths, exec allow/block lists, and outbound secret patterns through OpenClaw plugin config for `prism-security`.
 
 ## Service Operations
 
 ### Linux (systemd)
 
 ```bash
-sudo systemctl status kyaclaw-scanner kyaclaw-proxy kyaclaw-monitor
-sudo systemctl restart kyaclaw-scanner kyaclaw-proxy kyaclaw-monitor
-sudo journalctl -u kyaclaw-proxy -f
+sudo systemctl status prism-scanner prism-proxy prism-monitor
+sudo systemctl restart prism-scanner prism-proxy prism-monitor
+sudo journalctl -u prism-proxy -f
 ```
 
 ### macOS (launchd)
 
 ```bash
 cp /opt/openclaw-prism/launchd/*.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.kyaclaw.scanner.plist
-launchctl load ~/Library/LaunchAgents/com.kyaclaw.proxy.plist
-launchctl load ~/Library/LaunchAgents/com.kyaclaw.monitor.plist
+launchctl load ~/Library/LaunchAgents/com.prism.scanner.plist
+launchctl load ~/Library/LaunchAgents/com.prism.proxy.plist
+launchctl load ~/Library/LaunchAgents/com.prism.monitor.plist
 ```
 
 ## Development
@@ -267,7 +267,7 @@ pnpm lint
 
 Local check on March 5, 2026:
 - `pnpm build`: passed
-- `pnpm test`: passed (`67` tests)
+- `pnpm test`: passed (`75` tests)
 - `pnpm lint`: failing in `packages/cli` (`TS2307` module resolution for `@kyaclaw/shared/audit`)
 
 ## Uninstall

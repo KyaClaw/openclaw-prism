@@ -1,6 +1,6 @@
 {
-  "id": "kyaclaw-security",
-  "name": "KyaClaw PRISM Security Guard",
+  "id": "prism-security",
+  "name": "PRISM Security Guard",
   "description": "Proactive Runtime Injection Shield & Monitor — tool abuse, prompt injection, and outbound data exfiltration defense.",
   "configSchema": {
     "type": "object",

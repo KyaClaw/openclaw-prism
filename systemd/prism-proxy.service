@@ -1,14 +1,14 @@
 [Unit]
-Description=KyaClaw PRISM Invoke Guard Proxy
-After=network.target kyaclaw-scanner.service
-Wants=kyaclaw-scanner.service
+Description=PRISM Invoke Guard Proxy
+After=network.target prism-scanner.service
+Wants=prism-scanner.service
 
 [Service]
 Type=simple
-User=__KYACLAW_USER__
+User=__PRISM_USER__
 ExecStart=/usr/bin/node --enable-source-maps /opt/openclaw-prism/packages/proxy/dist/index.js
 Environment=INVOKE_GUARD_POLICY=/opt/openclaw-prism/config/invoke-guard.policy.json
-Environment=KYACLAW_PROXY_START=1
+Environment=PRISM_PROXY_START=1
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5

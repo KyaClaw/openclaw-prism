@@ -108,6 +108,6 @@ export function createMonitor(opts?: {
 // Start when run directly
 const isMainModule =
   process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""));
-if (isMainModule || process.env.KYACLAW_MONITOR_START) {
+if (isMainModule || process.env.PRISM_MONITOR_START) {
   createMonitor();
 }

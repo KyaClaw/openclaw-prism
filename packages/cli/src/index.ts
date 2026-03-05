@@ -27,7 +27,7 @@ const AUDIT_LOG = join(AUDIT_DIR, "audit.jsonl");
 const program = new Command();
 program
   .name("openclaw-prism")
-  .description("KyaClaw PRISM — Proactive Runtime Injection Shield & Monitor")
+  .description("PRISM — Proactive Runtime Injection Shield & Monitor")
   .version("0.1.0");
 
 // ── start command ──
@@ -38,7 +38,7 @@ program
   .action((service: string) => {
     const services = service === "all" ? ["scanner", "proxy", "monitor"] : [service];
     for (const svc of services) {
-      const envKey = `KYACLAW_${svc.toUpperCase()}_START`;
+      const envKey = `PRISM_${svc.toUpperCase()}_START`;
       process.stdout.write(`[prism] starting ${svc}...\n`);
 
       let modulePath: string;
