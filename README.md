@@ -2,6 +2,8 @@
   <img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+">
   <img src="https://img.shields.io/badge/TypeScript-5.7%2B-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="License">
+  <br><br>
+  <a href="https://buymeacoffee.com/kyaclaw" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 </p>
 
 # OpenClaw PRISM
@@ -228,6 +230,12 @@ openclaw-prism/
 ├── install.sh
 └── uninstall.sh
 ```
+
+## Support
+
+If you find this project useful, consider buying me a coffee!
+
+<a href="https://buymeacoffee.com/kyaclaw" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 ## License
 
