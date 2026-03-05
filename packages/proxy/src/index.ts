@@ -1,0 +1,298 @@
+#!/usr/bin/env node
+import fs from "node:fs";
+import http from "node:http";
+
+// ── Policy types ──
+type ClientPolicy = {
+  id: string;
+  token: string;
+  allowedSessionPrefixes: string[];
+  allowTools: string[];
+  denyTools?: string[];
+};
+
+type Policy = {
+  host: string;
+  port: number;
+  upstreamUrl: string;
+  upstreamTokenEnv: string;
+  upstreamTimeoutMs?: number;
+  defaultDenyTools: string[];
+  scannerUrl?: string;
+  scannerTimeoutMs?: number;
+  blockOnScannerFailure?: boolean;
+  clients: ClientPolicy[];
+};
+
+type InvokeBody = {
+  tool?: unknown;
+  args?: unknown;
+  action?: unknown;
+  sessionKey?: unknown;
+  dryRun?: unknown;
+};
+
+// ── Policy loading ──
+const POLICY_PATH = process.env.INVOKE_GUARD_POLICY ?? "./config/invoke-guard.policy.json";
+
+export function loadPolicy(path?: string): Policy {
+  const raw = fs.readFileSync(path ?? POLICY_PATH, "utf8");
+  return JSON.parse(raw) as Policy;
+}
+
+// ── Utility functions ──
+function normalizeToolName(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function readBearer(req: http.IncomingMessage): string {
+  const raw = (req.headers["authorization"] ?? "") as string;
+  if (!raw.toLowerCase().startsWith("bearer ")) return "";
+  return raw.slice(7).trim();
+}
+
+function getClientByToken(clients: ClientPolicy[], token: string): ClientPolicy | null {
+  for (const c of clients) {
+    if (c.token === token) return c;
+  }
+  return null;
+}
+
+function isSessionAllowed(sessionKey: string, prefixes: string[]): boolean {
+  return prefixes.some((p) => sessionKey.startsWith(p));
+}
+
+function extractExecCommand(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  const record = args as Record<string, unknown>;
+  for (const key of ["command", "cmd", "script"]) {
+    const v = record[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+function isDangerousExec(command: string): string | null {
+  const patterns: Array<{ reason: string; re: RegExp }> = [
+    { reason: "rm-root", re: /rm\s+-rf\s+\/(\s|$)/i },
+    { reason: "curl-pipe-shell", re: /curl\s+[^|]*\|\s*(sh|bash|zsh)/i },
+    { reason: "wget-pipe-shell", re: /wget\s+[^|]*\|\s*(sh|bash|zsh)/i },
+    { reason: "netcat-exec", re: /nc\s+.*\s+-e\s+/i },
+  ];
+  for (const p of patterns) {
+    if (p.re.test(command)) return p.reason;
+  }
+  return null;
+}
+
+function json(res: http.ServerResponse, status: number, payload: unknown) {
+  res.statusCode = status;
+  res.setHeader("content-type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(payload));
+}
+
+async function scanResultText(
+  scannerUrl: string,
+  text: string,
+  timeoutMs: number,
+): Promise<{ verdict: string; reasons: string[] }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(scannerUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error(`scanner status=${resp.status}`);
+    const payload = (await resp.json()) as { verdict?: string; reasons?: string[] };
+    return {
+      verdict: payload.verdict ?? "benign",
+      reasons: Array.isArray(payload.reasons) ? payload.reasons.map(String) : [],
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function extractTextFromInvokeResult(result: unknown): string {
+  try {
+    if (typeof result === "string") return result;
+    return JSON.stringify(result);
+  } catch {
+    return String(result);
+  }
+}
+
+// ── Server factory ──
+export function createServer(policyOverride?: Policy) {
+  let policy = policyOverride!;
+
+  const server = http.createServer(async (req, res) => {
+    if (req.method === "GET" && req.url === "/healthz") {
+      return json(res, 200, { ok: true });
+    }
+
+    if (req.method !== "POST" || req.url !== "/tools/invoke") {
+      return json(res, 404, { ok: false, error: "not found" });
+    }
+
+    const callerToken = readBearer(req);
+    const caller = getClientByToken(policy.clients, callerToken);
+    if (!caller) {
+      return json(res, 401, { ok: false, error: "unauthorized caller" });
+    }
+
+    let raw = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      raw += chunk;
+      if (raw.length > 2 * 1024 * 1024) {
+        req.destroy(new Error("payload too large"));
+      }
+    });
+
+    req.on("end", async () => {
+      let body: InvokeBody;
+      try {
+        body = (raw ? JSON.parse(raw) : {}) as InvokeBody;
+      } catch (err) {
+        return json(res, 400, { ok: false, error: `invalid json: ${String(err)}` });
+      }
+
+      const tool = normalizeToolName(body.tool);
+      if (!tool) {
+        return json(res, 400, { ok: false, error: "tool is required" });
+      }
+
+      const sessionKey = typeof body.sessionKey === "string" ? body.sessionKey.trim() : "";
+      if (!sessionKey) {
+        return json(res, 400, { ok: false, error: "sessionKey is required" });
+      }
+      if (!isSessionAllowed(sessionKey, caller.allowedSessionPrefixes)) {
+        return json(res, 403, { ok: false, error: "session ownership check failed" });
+      }
+
+      const defaultDeny = new Set(policy.defaultDenyTools.map((x) => x.toLowerCase()));
+      const callerAllow = new Set(caller.allowTools.map((x) => x.toLowerCase()));
+      const callerDeny = new Set((caller.denyTools ?? []).map((x) => x.toLowerCase()));
+
+      if (!callerAllow.has(tool) || defaultDeny.has(tool) || callerDeny.has(tool)) {
+        return json(res, 403, { ok: false, error: `tool denied by policy: ${tool}` });
+      }
+
+      if (tool === "exec" || tool === "bash") {
+        const cmd = extractExecCommand(body.args);
+        const dangerous = isDangerousExec(cmd);
+        if (dangerous) {
+          return json(res, 403, { ok: false, error: `dangerous exec blocked: ${dangerous}` });
+        }
+      }
+
+      const upstreamToken = process.env[policy.upstreamTokenEnv] ?? "";
+      if (!upstreamToken) {
+        return json(res, 500, { ok: false, error: `missing env ${policy.upstreamTokenEnv}` });
+      }
+
+      // v4 fix: sanitized body — only forward verified fields
+      const sanitizedBody = {
+        tool,
+        args: body.args,
+        sessionKey,
+        ...(body.dryRun !== undefined ? { dryRun: body.dryRun } : {}),
+      };
+
+      let upstreamResp: Response;
+      try {
+        upstreamResp = await fetch(`${policy.upstreamUrl}/tools/invoke`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${upstreamToken}`,
+            "x-openclaw-message-channel": "api",
+          },
+          body: JSON.stringify(sanitizedBody),
+          signal: AbortSignal.timeout(policy.upstreamTimeoutMs ?? 30_000),
+        });
+      } catch (err) {
+        const msg = err instanceof Error && err.name === "TimeoutError"
+          ? "upstream timeout" : `upstream unavailable: ${String(err)}`;
+        return json(res, 502, { ok: false, error: msg });
+      }
+
+      let payload: unknown;
+      try {
+        payload = await upstreamResp.json();
+      } catch {
+        payload = { ok: false, error: { message: "invalid upstream payload" } };
+      }
+
+      // Bypass result scan for web_fetch/browser
+      if (tool === "web_fetch" || tool === "browser") {
+        try {
+          const text = extractTextFromInvokeResult(payload).slice(0, 30_000);
+          if (policy.scannerUrl) {
+            const verdict = await scanResultText(
+              policy.scannerUrl,
+              text,
+              policy.scannerTimeoutMs ?? 1200,
+            );
+            if (verdict.verdict === "malicious") {
+              return json(res, 409, {
+                ok: false,
+                error: {
+                  type: "security_block",
+                  message: "tool result blocked by injection scanner",
+                  reasons: verdict.reasons,
+                },
+              });
+            }
+          }
+        } catch (err) {
+          if (policy.blockOnScannerFailure) {
+            return json(res, 503, { ok: false, error: `scanner unavailable: ${String(err)}` });
+          }
+        }
+      }
+
+      return json(res, upstreamResp.status, payload);
+    });
+  });
+
+  // SIGHUP policy reload
+  const reloadPolicy = () => {
+    try {
+      policy = loadPolicy();
+      process.stdout.write("[invoke-guard] policy reloaded\n");
+    } catch (err) {
+      process.stderr.write(`[invoke-guard] policy reload failed: ${String(err)}\n`);
+    }
+  };
+
+  return { server, reloadPolicy };
+}
+
+// Start server when run directly
+const isMainModule =
+  process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*\//, ""));
+if (isMainModule || process.env.KYACLAW_PROXY_START) {
+  const policy = loadPolicy();
+  const { server, reloadPolicy } = createServer(policy);
+  server.listen(policy.port, policy.host, () => {
+    process.stdout.write(`[invoke-guard] listening on http://${policy.host}:${policy.port}\n`);
+  });
+  process.on("SIGHUP", reloadPolicy);
+}
+
+// Export internals for testing
+export {
+  normalizeToolName,
+  readBearer,
+  getClientByToken,
+  isSessionAllowed,
+  extractExecCommand,
+  isDangerousExec,
+  extractTextFromInvokeResult,
+};
+export type { ClientPolicy, Policy, InvokeBody };

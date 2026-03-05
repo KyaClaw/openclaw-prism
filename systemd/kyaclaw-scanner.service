@@ -1,0 +1,19 @@
+[Unit]
+Description=KyaClaw PRISM Injection Scanner
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=__KYACLAW_USER__
+ExecStart=/usr/bin/node --enable-source-maps /opt/kyaclaw-prism/packages/scanner/dist/index.js
+Environment=SCANNER_HOST=127.0.0.1
+Environment=SCANNER_PORT=18766
+Environment=OLLAMA_URL=http://127.0.0.1:11434/api/generate
+Environment=OLLAMA_MODEL=qwen3:30b
+Environment=KYACLAW_SCANNER_START=1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

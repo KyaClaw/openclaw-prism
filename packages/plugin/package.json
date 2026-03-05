@@ -1,0 +1,32 @@
+{
+  "name": "@kyaclaw/plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@kyaclaw/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "openclaw": "^2026"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}

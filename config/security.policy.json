@@ -1,0 +1,35 @@
+{
+  "riskTtlMs": 180000,
+  "maxScanChars": 20000,
+  "scanTools": ["web_fetch", "browser"],
+  "protectedPathPatterns": [
+    "/etc/*", "/root/*", "/home/*/.ssh/*",
+    "*.env", "openclaw.json", "AGENTS.md", "SOUL.md", "auth-profiles.json"
+  ],
+  "execAllowedPrefixes": [
+    "node", "npm", "npx", "bun", "bunx",
+    "python3", "python", "pip",
+    "git", "gh",
+    "ls", "cat", "head", "tail", "wc", "grep", "find", "which",
+    "echo", "date", "pwd", "docker", "openclaw"
+  ],
+  "execBlockedPatterns": [
+    "rm\\s+-rf\\s+/(\\s|$)",
+    "curl\\s+[^|]*\\|\\s*(sh|bash|zsh)",
+    "wget\\s+[^|]*\\|\\s*(sh|bash|zsh)",
+    "nc\\s+.*\\s+-e\\s+",
+    "python\\s+-c\\s+.*(socket|subprocess)",
+    "node\\s+-e\\s+.*(child_process|net\\.)",
+    "\\bsudo\\b"
+  ],
+  "scannerUrl": "http://127.0.0.1:18766/scan",
+  "scannerTimeoutMs": 900,
+  "blockOnScannerFailure": false,
+  "outboundSecretPatterns": [
+    "AKIA[0-9A-Z]{16}",
+    "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----",
+    "xox[baprs]-[0-9A-Za-z-]{10,}",
+    "ghp_[0-9A-Za-z]{30,}",
+    "sk-[A-Za-z0-9]{20,}"
+  ]
+}

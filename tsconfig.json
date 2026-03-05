@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/plugin" },
+    { "path": "packages/scanner" },
+    { "path": "packages/proxy" },
+    { "path": "packages/monitor" },
+    { "path": "packages/cli" }
+  ]
+}

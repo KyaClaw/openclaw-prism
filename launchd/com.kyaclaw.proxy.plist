@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kyaclaw.proxy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>--enable-source-maps</string>
+    <string>/opt/kyaclaw-prism/packages/proxy/dist/index.js</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>INVOKE_GUARD_POLICY</key>
+    <string>/opt/kyaclaw-prism/config/invoke-guard.policy.json</string>
+    <key>KYACLAW_PROXY_START</key>
+    <string>1</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/kyaclaw-proxy.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/kyaclaw-proxy.err</string>
+</dict>
+</plist>

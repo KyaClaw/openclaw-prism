@@ -1,0 +1,21 @@
+{
+  "name": "@kyaclaw/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "bin": {
+    "kyaclaw-prism": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@kyaclaw/shared": "workspace:*",
+    "commander": "^13",
+    "tsx": "^4"
+  }
+}

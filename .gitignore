@@ -1,0 +1,10 @@
+node_modules/
+dist/
+openclaw/
+*.env
+.env.*
+.DS_Store
+*.tsbuildinfo
+.claude/
+claude-doc/
+codex-doc/
