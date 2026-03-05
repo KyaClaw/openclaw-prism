@@ -141,17 +141,28 @@ else
   fi
 fi
 
-# ── 5. Link plugin to OpenClaw extensions ──
-echo "[5/7] Linking plugin to OpenClaw..."
+# ── 5. Copy plugin to OpenClaw extensions ──
+# Note: OpenClaw 2026.3.x plugin discovery uses entry.isDirectory() which
+# does not follow symlinks. We must copy the plugin as a real directory.
+echo "[5/7] Installing plugin to OpenClaw extensions..."
 
 mkdir -p "$EXTENSIONS_DIR"
-PLUGIN_LINK="$EXTENSIONS_DIR/prism-security"
+PLUGIN_DIR="$EXTENSIONS_DIR/prism-security"
 
-if [ -L "$PLUGIN_LINK" ] || [ -d "$PLUGIN_LINK" ]; then
-  rm -rf "$PLUGIN_LINK"
+# Remove old symlink or directory
+if [ -L "$PLUGIN_DIR" ] || [ -d "$PLUGIN_DIR" ]; then
+  rm -rf "$PLUGIN_DIR"
 fi
-ln -s "$INSTALL_DIR/packages/plugin" "$PLUGIN_LINK"
-echo "  Linked: $PLUGIN_LINK -> $INSTALL_DIR/packages/plugin"
+
+# Copy plugin as a real directory
+mkdir -p "$PLUGIN_DIR"
+rsync -a --delete "$INSTALL_DIR/packages/plugin/" "$PLUGIN_DIR/"
+
+# Copy @kyaclaw/shared dependency (plugin imports from it)
+mkdir -p "$PLUGIN_DIR/node_modules/@kyaclaw"
+rsync -a --delete "$INSTALL_DIR/packages/shared/" "$PLUGIN_DIR/node_modules/@kyaclaw/shared/"
+
+echo "  Installed plugin to $PLUGIN_DIR"
 
 # Add to OpenClaw plugins.allow if openclaw.json exists
 if [ -f "$OPENCLAW_JSON" ]; then
