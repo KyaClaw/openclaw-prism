@@ -33,6 +33,7 @@ export type AllowActionDescriptor = {
   field?: keyof SecurityConfig;
   riskLevel?: RiskLevel;
   requiresConfirmation?: boolean;
+  alreadyApplied?: boolean;
   reason?: string;
 };
 
@@ -315,13 +316,17 @@ function riskDescription(action: AllowAction, riskLevel: RiskLevel): string {
   }
 }
 
-export function describeAllowAction(record: Record<string, unknown>): AllowActionDescriptor {
+export function describeAllowAction(
+  record: Record<string, unknown>,
+  config?: SecurityConfig,
+): AllowActionDescriptor {
   const reconstructed = reconstructAllowAction(record);
   if (!reconstructed.supported) {
     return { supported: false, reason: reconstructed.reason };
   }
 
   const riskLevel = ACTION_RISK_MAP[reconstructed.action.type];
+  const alreadyApplied = config ? isActionAlreadyApplied(config, reconstructed.action) : false;
   return {
     supported: true,
     type: reconstructed.action.type,
@@ -330,6 +335,7 @@ export function describeAllowAction(record: Record<string, unknown>): AllowActio
     description: reconstructed.action.description,
     riskLevel,
     requiresConfirmation: riskLevel !== "low",
+    alreadyApplied,
   };
 }
 
@@ -374,6 +380,24 @@ function applyActionToConfig(config: SecurityConfig, action: AllowAction): Secur
 
   next.outboundSecretPatterns = ensureStringArray(next.outboundSecretPatterns).filter((v) => v !== action.value);
   return next;
+}
+
+function isActionAlreadyApplied(config: SecurityConfig, action: AllowAction): boolean {
+  if (action.type === "add_exec_prefix") {
+    const normalized = normalizeActionValue(action.value).toLowerCase();
+    return ensureStringArray(config.execAllowedPrefixes).some((v) => v.toLowerCase() === normalized);
+  }
+
+  if (action.type === "add_path_exception") {
+    const normalized = normalizeActionValue(action.value);
+    return ensureStringArray(config.protectedPathExceptions).includes(normalized);
+  }
+
+  if (action.type === "remove_blocked_pattern") {
+    return !ensureStringArray(config.execBlockedPatterns).includes(action.value);
+  }
+
+  return !ensureStringArray(config.outboundSecretPatterns).includes(action.value);
 }
 
 function assertActionMatches(expected: AllowAction, candidate?: Partial<AllowAction>): void {

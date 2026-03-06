@@ -238,8 +238,15 @@ function renderBlocks(data) {
     tdSession.textContent = b.session ? b.session.slice(0, 12) : '—';
     const tdAction = ce('td');
     if (b.allowAction && b.allowAction.supported) {
-      const btn = ce('button'); btn.textContent = 'Allow';
-      btn.onclick = () => openAllowModal(b);
+      const btn = ce('button');
+      if (b.allowAction.alreadyApplied) {
+        btn.textContent = '✓ Allowed';
+        btn.className = 'success';
+        btn.disabled = true;
+      } else {
+        btn.textContent = 'Allow';
+        btn.onclick = () => openAllowModal(b);
+      }
       tdAction.appendChild(btn);
     }
     tr.append(tdTime, tdEvent, tdDetail, tdSession, tdAction);
@@ -356,7 +363,7 @@ $('#allow-submit').onclick = async () => {
   }
   try {
     $('#allow-submit').disabled = true;
-    const result = await api('/api/allow/apply', {
+    await api('/api/allow/apply', {
       method: 'POST',
       body: {
         sourceCursor: pendingAllow.cursor,
@@ -366,22 +373,9 @@ $('#allow-submit').onclick = async () => {
       },
     });
     $('#allow-modal').classList.add('hidden');
-    // Mark the button as allowed in the table
-    const rows = $$('#blocks-body tr');
-    for (const row of rows) {
-      const btn = $('button', row);
-      if (btn && btn.textContent === 'Allow') {
-        const detail = $$('td', row)[2];
-        if (detail && detail.textContent === blockDetail(pendingAllow)) {
-          btn.textContent = '✓ Allowed';
-          btn.className = 'success';
-          btn.onclick = null;
-          break;
-        }
-      }
-    }
     pendingAllow = null;
-    if (configData) loadConfig();
+    if (configData) void loadConfig();
+    await loadBlocks();
   } catch (e) {
     showStatus('allow-error', e.message, 'error');
   } finally {

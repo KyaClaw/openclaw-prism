@@ -218,12 +218,13 @@ export function createServer() {
           if (page.sizeWarning) {
             res.setHeader("X-Audit-Size-Warning", "true");
           }
+          const currentConfig = readConfigStore().config;
 
           const blocks = page.blocks.map((entry) => ({
             ...entry.record,
             fingerprint: entry.fingerprint,
             cursor: entry.cursor,
-            allowAction: describeAllowAction(entry.record),
+            allowAction: describeAllowAction(entry.record, currentConfig),
           }));
           return json(res, 200, { blocks, nextCursor: page.nextCursor, hasMore: page.hasMore });
         } catch (err) {

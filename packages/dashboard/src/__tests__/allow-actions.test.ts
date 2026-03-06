@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import {
   applyAllowAction,
+  describeAllowAction,
   previewAllowAction,
   SourceCursorValidationError,
   ConfirmationRequiredError,
@@ -222,6 +223,25 @@ describe("allow-actions", () => {
         policyPath: fixture.policyPath,
       });
     }).toThrow(SourceCursorValidationError);
+  });
+
+  it("marks allow action as already applied when config already satisfies it", () => {
+    const fixture = createFixture();
+    const entries = readAuditEntries({ auditLogPath: fixture.auditPath }).entries;
+    const execRecord = entries.find((entry) => entry.record.event === "exec_whitelist_block")!.record;
+    const pathRecord = entries.find((entry) =>
+      entry.record.event === "path_block" && entry.record.legacyRecord !== true
+    )!.record;
+
+    const execDescriptor = describeAllowAction(execRecord, { execAllowedPrefixes: ["curl"] });
+    expect(execDescriptor.supported).toBe(true);
+    expect(execDescriptor.alreadyApplied).toBe(true);
+
+    const pathDescriptor = describeAllowAction(pathRecord, {
+      protectedPathExceptions: ["/home/user/etc/hosts"],
+    });
+    expect(pathDescriptor.supported).toBe(true);
+    expect(pathDescriptor.alreadyApplied).toBe(true);
   });
 
   it("rejects unsupported event types", () => {
