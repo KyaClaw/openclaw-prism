@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
-import { verifyAuditChain } from "@kyaclaw/shared/audit";
+import { verifyAuditAnchors, verifyAuditChain } from "@kyaclaw/shared/audit";
 import { runVerify } from "./verify.js";
 
 // Auto-load .env from install directory
@@ -24,6 +24,7 @@ if (process.env.PRISM_SKIP_DOTENV !== "1" && existsSync(ENV_FILE)) {
 
 const AUDIT_DIR = join(homedir(), ".openclaw", "security");
 const AUDIT_LOG = join(AUDIT_DIR, "audit.jsonl");
+const AUDIT_ANCHOR_LOG = process.env.OPENCLAW_AUDIT_ANCHOR_FILE ?? join(AUDIT_DIR, "audit.anchor.jsonl");
 const VERIFY_SCANNER_URL = process.env.PRISM_VERIFY_SCANNER_URL ?? "http://127.0.0.1:18766/scan";
 const VERIFY_PROXY_URL = process.env.PRISM_VERIFY_PROXY_URL ?? "http://127.0.0.1:18767/healthz";
 
@@ -140,8 +141,10 @@ audit
 
 audit
   .command("verify")
-  .description("Verify audit integrity (HMAC + chain continuity)")
-  .action(() => {
+  .option("--anchor-file <path>", "Audit anchor log path", AUDIT_ANCHOR_LOG)
+  .option("--require-anchor", "Fail if anchor file is missing", false)
+  .description("Verify audit integrity (HMAC + chain continuity + anchors)")
+  .action((opts: { anchorFile: string; requireAnchor?: boolean }) => {
     if (!existsSync(AUDIT_LOG)) {
       process.stdout.write("No audit log found.\n");
       return;
@@ -153,6 +156,25 @@ audit
       process.stderr.write(`[audit] INVALID chain at line ${firstInvalidLine}\n`);
     }
     process.stdout.write(`[audit] ${valid} valid, ${invalid} invalid out of ${lines.length} entries\n`);
+
+    const anchorFile = opts.anchorFile || AUDIT_ANCHOR_LOG;
+    if (existsSync(anchorFile)) {
+      const anchorLines = readFileSync(anchorFile, "utf8").trim().split("\n");
+      const anchorResult = verifyAuditAnchors(lines, anchorLines);
+      if (anchorResult.firstMismatchLine !== null) {
+        process.stderr.write(
+          `[audit] INVALID anchor at line ${anchorResult.firstMismatchLine}: ${anchorResult.firstMismatchReason}\n`,
+        );
+      }
+      process.stdout.write(
+        `[audit] anchors ${anchorResult.anchorsChecked} checked, ${anchorResult.anchorMismatches} mismatched\n`,
+      );
+      if (anchorResult.anchorMismatches > 0) process.exitCode = 1;
+    } else {
+      process.stdout.write(`[audit] anchor file not found: ${anchorFile}\n`);
+      if (opts.requireAnchor) process.exitCode = 1;
+    }
+
     if (invalid > 0) process.exitCode = 1;
   });
 
