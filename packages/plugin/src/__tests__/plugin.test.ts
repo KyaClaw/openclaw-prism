@@ -7,6 +7,7 @@ vi.mock("@kyaclaw/shared/audit", () => ({
   auditLog: vi.fn(),
 }));
 
+import { auditLog } from "@kyaclaw/shared/audit";
 import register, {
   riskBySession,
   sweepExpired,
@@ -178,6 +179,7 @@ describe("plugin utilities", () => {
 });
 
 describe("plugin hook registration", () => {
+  let api: any;
   let hooks: Map<string, HookHandler[]>;
   const originalScannerToken = process.env.SCANNER_AUTH_TOKEN;
 
@@ -185,7 +187,9 @@ describe("plugin hook registration", () => {
     riskBySession.clear();
     stopSweepTimer();
     const mock = createMockApi({ persistRiskState: false });
+    api = mock.api;
     hooks = mock.hooks;
+    vi.mocked(auditLog).mockReset();
     register(mock.api);
   });
 
@@ -414,6 +418,20 @@ describe("plugin hook registration", () => {
     );
     expect(result?.block).toBe(true);
     expect(result?.blockReason).toContain("private-network");
+  });
+
+  it("before_tool_call still blocks when audit logging throws", () => {
+    vi.mocked(auditLog).mockImplementation(() => {
+      throw new Error("OPENCLAW_AUDIT_HMAC_KEY environment variable is required for audit logging");
+    });
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "exec", params: { command: "ruby -v" } },
+      { sessionKey: "s1", toolName: "exec" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("not in whitelist");
+    expect(api.logger.warn).toHaveBeenCalled();
   });
 
   it("after_tool_call sends scanner auth header when token is configured", async () => {

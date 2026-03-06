@@ -6,8 +6,10 @@ set -euo pipefail
 
 # Resolve real user home even if run via sudo
 if [ -n "${SUDO_USER:-}" ]; then
+  REAL_USER="$SUDO_USER"
   REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 else
+  REAL_USER="$USER"
   REAL_HOME="$HOME"
 fi
 
@@ -244,7 +246,7 @@ mkdir -p "$SECURITY_DIR"
 if [ -d /etc/systemd/system ] && command -v systemctl &>/dev/null; then
   echo "  Installing systemd services..."
 
-  RUN_USER="$(whoami)"
+  RUN_USER="$REAL_USER"
   for svc in prism-scanner prism-proxy prism-monitor prism-dashboard; do
     sudo cp "$INSTALL_DIR/systemd/${svc}.service" /etc/systemd/system/
     # Replace user placeholder and inject environment file
@@ -276,6 +278,32 @@ else
   echo "    node $INSTALL_DIR/packages/proxy/dist/index.js &"
   echo "    node $INSTALL_DIR/packages/monitor/dist/index.js &"
   echo "    node $INSTALL_DIR/packages/dashboard/dist/index.js &"
+fi
+
+# Ensure user-level OpenClaw gateway service receives PRISM env vars (common deployment path).
+echo "  Configuring OpenClaw user service environment..."
+USER_SYSTEMD_DIR="$REAL_HOME/.config/systemd/user"
+USER_DROPIN_DIR="$USER_SYSTEMD_DIR/openclaw-gateway.service.d"
+USER_DROPIN_FILE="$USER_DROPIN_DIR/prism-env.conf"
+mkdir -p "$USER_DROPIN_DIR"
+cat > "$USER_DROPIN_FILE" <<EOF
+[Service]
+EnvironmentFile=$ENV_FILE
+Environment=PRISM_SECURITY_POLICY=$SECURITY_DIR/security.policy.json
+EOF
+chown "$REAL_USER":"$REAL_USER" "$USER_DROPIN_FILE" 2>/dev/null || true
+echo "  Wrote $USER_DROPIN_FILE"
+
+if command -v systemctl &>/dev/null && systemctl --user cat openclaw-gateway.service >/dev/null 2>&1; then
+  systemctl --user daemon-reload || true
+  if systemctl --user is-active --quiet openclaw-gateway.service 2>/dev/null; then
+    systemctl --user restart openclaw-gateway.service || true
+    echo "  Restarted user service: openclaw-gateway.service"
+  else
+    echo "  User service openclaw-gateway.service not active (drop-in applies on next start)"
+  fi
+else
+  echo "  User service openclaw-gateway.service not detected (drop-in ready for future use)"
 fi
 
 # ── 7. Verify ──
@@ -319,9 +347,18 @@ echo ""
 read -rp "Restart OpenClaw gateway now to load the plugin? [y/N] " restart_gw
 if [[ "$restart_gw" =~ ^[Yy]$ ]]; then
   RESTARTED=false
+  # Try user-level systemd first (openclaw installs here on many hosts)
+  for svc_name in openclaw-gateway openclaw; do
+    if command -v systemctl &>/dev/null && systemctl --user is-active --quiet "$svc_name" 2>/dev/null; then
+      systemctl --user restart "$svc_name"
+      echo "  OpenClaw gateway restarted (user systemd: $svc_name)."
+      RESTARTED=true
+      break
+    fi
+  done
   # Try systemd first
   for svc_name in openclaw openclaw-gateway; do
-    if command -v systemctl &>/dev/null && systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+    if [ "$RESTARTED" = false ] && command -v systemctl &>/dev/null && systemctl is-active --quiet "$svc_name" 2>/dev/null; then
       sudo systemctl restart "$svc_name"
       echo "  OpenClaw gateway restarted (systemd: $svc_name)."
       RESTARTED=true

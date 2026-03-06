@@ -268,6 +268,26 @@ sudo systemctl restart prism-scanner prism-proxy prism-monitor
 sudo journalctl -u prism-proxy -f
 ```
 
+If OpenClaw runs as a **user service** (`openclaw-gateway.service`), ensure PRISM env vars are injected:
+
+```bash
+mkdir -p ~/.config/systemd/user/openclaw-gateway.service.d
+cat > ~/.config/systemd/user/openclaw-gateway.service.d/prism-env.conf <<'EOF'
+[Service]
+EnvironmentFile=/opt/openclaw-prism/.env
+Environment=PRISM_SECURITY_POLICY=%h/.openclaw/security/security.policy.json
+EOF
+systemctl --user daemon-reload
+systemctl --user restart openclaw-gateway
+```
+
+Quick check (must include `OPENCLAW_AUDIT_HMAC_KEY`):
+
+```bash
+pid=$(systemctl --user show -p MainPID --value openclaw-gateway)
+tr '\0' '\n' < /proc/$pid/environ | rg 'OPENCLAW_AUDIT_HMAC_KEY|PRISM_INTERNAL_TOKEN|PRISM_DASHBOARD_TOKEN|PRISM_SECURITY_POLICY'
+```
+
 ### macOS (launchd)
 
 ```bash

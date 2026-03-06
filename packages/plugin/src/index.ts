@@ -635,6 +635,22 @@ function jsonResponse(res: http.ServerResponse, status: number, payload: unknown
   res.end(JSON.stringify(payload));
 }
 
+let auditWriteUnavailableLogged = false;
+
+function safeAuditLog(api: OpenClawPluginApi, entry: Record<string, unknown>): void {
+  try {
+    auditLog(entry);
+    auditWriteUnavailableLogged = false;
+  } catch (error) {
+    if (auditWriteUnavailableLogged) return;
+    const message = error instanceof Error ? error.message : String(error);
+    api.logger?.warn?.(
+      `[security] audit logging unavailable; enforcement continues without audit trail: ${message}`,
+    );
+    auditWriteUnavailableLogged = true;
+  }
+}
+
 function startInternalAuditServer(api: OpenClawPluginApi): void {
   const token = process.env.PRISM_INTERNAL_TOKEN ?? "";
   if (!token) {
@@ -699,8 +715,20 @@ function startInternalAuditServer(api: OpenClawPluginApi): void {
         }
 
         // Write via auditLog (maintains HMAC chain integrity)
-        auditLog(body);
-        return jsonResponse(res, 200, { ok: true });
+        try {
+          auditLog(body);
+          auditWriteUnavailableLogged = false;
+          return jsonResponse(res, 200, { ok: true });
+        } catch (error) {
+          if (!auditWriteUnavailableLogged) {
+            const message = error instanceof Error ? error.message : String(error);
+            api.logger?.warn?.(
+              `[security] internal audit write failed: ${message}`,
+            );
+            auditWriteUnavailableLogged = true;
+          }
+          return jsonResponse(res, 503, { error: "audit_unavailable" });
+        }
       } catch {
         return jsonResponse(res, 400, { error: "invalid_json" });
       }
@@ -759,7 +787,7 @@ export default function register(api: OpenClawPluginApi) {
     const scan = heuristicScan(text);
     if (scan.suspicious && ctx.conversationId) {
       bumpRisk(ctx.conversationId, scan.reasons, rc.riskTtlMs, 10);
-      auditLog({ event: "inbound_injection_signal", reasons: scan.reasons, conversation: ctx.conversationId });
+      safeAuditLog(api, { event: "inbound_injection_signal", reasons: scan.reasons, conversation: ctx.conversationId });
     }
   });
 
@@ -771,7 +799,7 @@ export default function register(api: OpenClawPluginApi) {
       const scan = heuristicScan(promptText);
       if (scan.suspicious) {
         bumpRisk(ctx.sessionKey, scan.reasons, rc.riskTtlMs, 10);
-        auditLog({ event: "prompt_injection_signal", reasons: scan.reasons, session: ctx.sessionKey });
+        safeAuditLog(api, { event: "prompt_injection_signal", reasons: scan.reasons, session: ctx.sessionKey });
       }
     }
     const risk = getSessionRisk(ctx.sessionKey);
@@ -793,7 +821,7 @@ export default function register(api: OpenClawPluginApi) {
     // Risk escalation block
     const risk = getSessionRisk(ctx.sessionKey);
     if (risk && risk.score >= 20 && HIGH_RISK_TOOLS.has(tool)) {
-      auditLog({ event: "risk_escalation_block", tool, session: ctx.sessionKey, risk: risk.score });
+      safeAuditLog(api, { event: "risk_escalation_block", tool, session: ctx.sessionKey, risk: risk.score });
       return { block: true, blockReason: `[security] session risk ${risk.score} — blocked ${tool}` };
     }
 
@@ -802,26 +830,26 @@ export default function register(api: OpenClawPluginApi) {
       const command = firstStringParam(params, "command", "cmd", "script");
       if (command) {
         if (hasShellMetacharacters(command)) {
-          auditLog({ event: "exec_metachar_block", command: command.slice(0, 200), session: ctx.sessionKey });
+          safeAuditLog(api, { event: "exec_metachar_block", command: command.slice(0, 200), session: ctx.sessionKey });
           return { block: true, blockReason: "[security] shell metacharacters are not allowed in exec" };
         }
         const trampolineReason = execTrampolineReason(command);
         if (trampolineReason) {
-          auditLog({ event: "exec_trampoline_block", reason: trampolineReason, session: ctx.sessionKey });
+          safeAuditLog(api, { event: "exec_trampoline_block", reason: trampolineReason, session: ctx.sessionKey });
           return { block: true, blockReason: `[security] ${trampolineReason}` };
         }
         const firstWord = firstExecutable(command);
 
         // Whitelist check
         if (!firstWord || !rc.execAllowed.has(firstWord)) {
-          auditLog({ event: "exec_whitelist_block", command: command.slice(0, 200), session: ctx.sessionKey });
+          safeAuditLog(api, { event: "exec_whitelist_block", command: command.slice(0, 200), session: ctx.sessionKey });
           return { block: true, blockReason: `[security] command "${firstWord}" not in whitelist` };
         }
 
         // Blacklist pattern check
         for (const re of rc.execBlocked) {
           if (re.test(command)) {
-            auditLog({ event: "exec_pattern_block", pattern: re.source, session: ctx.sessionKey });
+            safeAuditLog(api, { event: "exec_pattern_block", pattern: re.source, session: ctx.sessionKey });
             return { block: true, blockReason: `[security] blocked dangerous pattern: ${re.source.slice(0, 60)}` };
           }
         }
@@ -840,7 +868,7 @@ export default function register(api: OpenClawPluginApi) {
 
         if (isProtectedPath(p, rc.protectedPaths, cwd)) {
           // Audit record stores rawPath + cwd for Dashboard to reconstruct canonical path
-          auditLog({
+          safeAuditLog(api, {
             event: "path_block",
             tool,
             rawPath: p,
@@ -859,7 +887,7 @@ export default function register(api: OpenClawPluginApi) {
         url &&
         /https?:\/\/(127\.0\.0\.1|localhost|10\.|172\.(1[6-9]|2\d|3[0-1])\.|192\.168\.)/i.test(url)
       ) {
-        auditLog({ event: "private_network_block", tool, url, session: ctx.sessionKey });
+        safeAuditLog(api, { event: "private_network_block", tool, url, session: ctx.sessionKey });
         return { block: true, blockReason: "[security] private-network URL blocked" };
       }
     }
@@ -878,7 +906,7 @@ export default function register(api: OpenClawPluginApi) {
       if (verdict.verdict === "malicious" || verdict.verdict === "suspicious") {
         const delta = verdict.verdict === "malicious" ? 30 : 15;
         bumpRisk(ctx.sessionKey!, verdict.reasons, rc.riskTtlMs, delta);
-        auditLog({
+        safeAuditLog(api, {
           event: "tool_result_injection",
           tool: event.toolName,
           verdict: verdict.verdict,
@@ -899,7 +927,7 @@ export default function register(api: OpenClawPluginApi) {
     const text = extractText(event.message, rc.maxScanChars);
     const scan = heuristicScan(text);
     if (!scan.suspicious) return { message: event.message };
-    auditLog({ event: "result_redacted", tool, reasons: scan.reasons });
+    safeAuditLog(api, { event: "result_redacted", tool, reasons: scan.reasons });
     return { message: redactMessage(event.message, scan.reasons) as any };
   });
 
@@ -918,13 +946,13 @@ export default function register(api: OpenClawPluginApi) {
     const content = String(event.content ?? "");
     for (const re of rc.outboundSecrets) {
       if (re.test(content)) {
-        auditLog({ event: "outbound_secret_blocked", pattern: re.source.slice(0, 40) });
+        safeAuditLog(api, { event: "outbound_secret_blocked", pattern: re.source.slice(0, 40) });
         return { cancel: true, content: "[security] message blocked: credential pattern detected" };
       }
     }
     const convRisk = getSessionRisk(ctx.conversationId);
     if (convRisk && convRisk.score >= 20) {
-      auditLog({ event: "outbound_risk_block", conversation: ctx.conversationId, risk: convRisk.score });
+      safeAuditLog(api, { event: "outbound_risk_block", conversation: ctx.conversationId, risk: convRisk.score });
       return { cancel: true, content: "[security] outbound blocked: elevated conversation risk" };
     }
   });
@@ -933,7 +961,7 @@ export default function register(api: OpenClawPluginApi) {
   api.on("subagent_spawning", (_event, ctx) => {
     const risk = getSessionRisk(ctx.requesterSessionKey);
     if (risk && risk.score >= 25) {
-      auditLog({ event: "subagent_spawn_blocked", session: ctx.requesterSessionKey, risk: risk.score });
+      safeAuditLog(api, { event: "subagent_spawn_blocked", session: ctx.requesterSessionKey, risk: risk.score });
       return { status: "error" as const, error: `[security] subagent denied: session risk ${risk.score}` };
     }
   });
@@ -966,10 +994,10 @@ export default function register(api: OpenClawPluginApi) {
           const newCfg = loadConfigFile(moduleState.configFilePath!);
           if (newCfg) {
             moduleState.runtimeCfg = buildRuntimeConfig(newCfg);
-            auditLog({ event: "security_config_reloaded", path: moduleState.configFilePath });
+            safeAuditLog(api, { event: "security_config_reloaded", path: moduleState.configFilePath });
             api.logger?.info?.("[security] config hot-reloaded");
           } else {
-            auditLog({ event: "security_config_reload_failed", path: moduleState.configFilePath });
+            safeAuditLog(api, { event: "security_config_reload_failed", path: moduleState.configFilePath });
             api.logger?.warn?.("[security] config reload failed, keeping previous config");
           }
         }, 300);

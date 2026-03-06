@@ -6,8 +6,10 @@ set -euo pipefail
 
 # Resolve real user home even if run via sudo
 if [ -n "${SUDO_USER:-}" ]; then
+  REAL_USER="$SUDO_USER"
   REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
 else
+  REAL_USER="$USER"
   REAL_HOME="$HOME"
 fi
 
@@ -17,6 +19,8 @@ OPENCLAW_JSON="$OPENCLAW_DIR/openclaw.json"
 EXTENSIONS_DIR="$OPENCLAW_DIR/extensions"
 SECURITY_DIR="$OPENCLAW_DIR/security"
 PLUGIN_LINK="$EXTENSIONS_DIR/prism-security"
+USER_DROPIN_DIR="$REAL_HOME/.config/systemd/user/openclaw-gateway.service.d"
+USER_DROPIN_FILE="$USER_DROPIN_DIR/prism-env.conf"
 
 echo "╔══════════════════════════════════════╗"
 echo "║  PRISM Uninstaller                  ║"
@@ -39,7 +43,7 @@ fi
 echo "[1/6] Stopping services..."
 
 if command -v systemctl &>/dev/null; then
-  for svc in prism-scanner prism-proxy prism-monitor; do
+  for svc in prism-scanner prism-proxy prism-monitor prism-dashboard; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
       sudo systemctl stop "$svc"
       echo "  Stopped $svc"
@@ -55,7 +59,7 @@ fi
 
 # ── 2. Remove launchd services (macOS) ──
 if [ "$(uname)" = "Darwin" ]; then
-  for plist in com.prism.scanner com.prism.proxy com.prism.monitor; do
+  for plist in com.prism.scanner com.prism.proxy com.prism.monitor com.prism.dashboard; do
     PLIST_PATH="$REAL_HOME/Library/LaunchAgents/${plist}.plist"
     if [ -f "$PLIST_PATH" ]; then
       launchctl unload "$PLIST_PATH" 2>/dev/null || true
@@ -121,10 +125,20 @@ else
   echo "  No installation found at $INSTALL_DIR"
 fi
 
-# ── 7. Kill any remaining processes ──
-echo "[6/6] Cleaning up processes..."
+# ── 7. Remove user-level gateway drop-in ──
+echo "[6/7] Removing OpenClaw user-service overrides..."
+if [ -f "$USER_DROPIN_FILE" ]; then
+  rm -f "$USER_DROPIN_FILE"
+  rmdir "$USER_DROPIN_DIR" 2>/dev/null || true
+  echo "  Removed $USER_DROPIN_FILE"
+else
+  echo "  No OpenClaw user-service drop-in found."
+fi
 
-for pattern in "prism-scanner" "prism-proxy" "prism-monitor" "PRISM_SCANNER_START" "PRISM_PROXY_START" "PRISM_MONITOR_START"; do
+# ── 8. Kill any remaining processes ──
+echo "[7/7] Cleaning up processes..."
+
+for pattern in "prism-scanner" "prism-proxy" "prism-monitor" "prism-dashboard" "PRISM_SCANNER_START" "PRISM_PROXY_START" "PRISM_MONITOR_START" "PRISM_DASHBOARD_START"; do
   pids=$(pgrep -f "$pattern" 2>/dev/null || true)
   if [ -n "$pids" ]; then
     echo "  Killing remaining processes: $pids"
@@ -142,8 +156,16 @@ echo ""
 read -rp "Restart OpenClaw gateway to unload the plugin? [y/N] " restart_gw
 if [[ "$restart_gw" =~ ^[Yy]$ ]]; then
   RESTARTED=false
+  for svc_name in openclaw-gateway openclaw; do
+    if command -v systemctl &>/dev/null && systemctl --user is-active --quiet "$svc_name" 2>/dev/null; then
+      systemctl --user restart "$svc_name"
+      echo "  OpenClaw gateway restarted (user systemd: $svc_name)."
+      RESTARTED=true
+      break
+    fi
+  done
   for svc_name in openclaw openclaw-gateway; do
-    if command -v systemctl &>/dev/null && systemctl is-active --quiet "$svc_name" 2>/dev/null; then
+    if [ "$RESTARTED" = false ] && command -v systemctl &>/dev/null && systemctl is-active --quiet "$svc_name" 2>/dev/null; then
       sudo systemctl restart "$svc_name"
       echo "  OpenClaw gateway restarted (systemd: $svc_name)."
       RESTARTED=true
