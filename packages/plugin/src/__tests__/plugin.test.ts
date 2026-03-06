@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 vi.mock("@kyaclaw/shared/audit", () => ({
   auditLog: vi.fn(),
@@ -8,6 +11,9 @@ import register, {
   riskBySession,
   sweepExpired,
   stopSweepTimer,
+  persistRiskStateToFile,
+  loadRiskStateFromFile,
+  resolveRiskStatePath,
   normalizeToolName,
   firstStringParam,
   collectPaths,
@@ -119,6 +125,56 @@ describe("plugin utilities", () => {
     const redacted = redactMessage({ role: "tool", content: "secret" }, ["test-reason"]) as any;
     expect(redacted.content).toContain("[security]");
   });
+
+  it("persists and restores non-expired risk entries", () => {
+    const now = Date.now();
+    const dir = mkdtempSync(join(tmpdir(), "prism-risk-state-"));
+    const riskFile = join(dir, "risk-state.json");
+    try {
+      riskBySession.clear();
+      riskBySession.set("alive", {
+        score: 25,
+        reasons: ["override-instruction"],
+        expiresAt: now + 60_000,
+      });
+      riskBySession.set("expired", {
+        score: 9,
+        reasons: ["stale"],
+        expiresAt: now - 1,
+      });
+
+      const persisted = persistRiskStateToFile(riskFile, riskBySession, now);
+      expect(persisted).toBe(1);
+      expect(riskBySession.has("expired")).toBe(false);
+
+      riskBySession.clear();
+      const loaded = loadRiskStateFromFile(riskFile, riskBySession, now);
+      expect(loaded).toBe(1);
+      expect(riskBySession.get("alive")?.score).toBe(25);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loadRiskStateFromFile tolerates corrupt files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prism-risk-corrupt-"));
+    const riskFile = join(dir, "risk-state.json");
+    try {
+      writeFileSync(riskFile, "{ definitely-not-json");
+      riskBySession.clear();
+      const loaded = loadRiskStateFromFile(riskFile, riskBySession);
+      expect(loaded).toBe(0);
+      expect(riskBySession.size).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveRiskStatePath expands home prefix", () => {
+    const resolved = resolveRiskStatePath("~/risk.json");
+    expect(resolved.includes("/risk.json")).toBe(true);
+    expect(resolved.startsWith("/")).toBe(true);
+  });
 });
 
 describe("plugin hook registration", () => {
@@ -128,7 +184,7 @@ describe("plugin hook registration", () => {
   beforeEach(() => {
     riskBySession.clear();
     stopSweepTimer();
-    const mock = createMockApi();
+    const mock = createMockApi({ persistRiskState: false });
     hooks = mock.hooks;
     register(mock.api);
   });
@@ -147,6 +203,36 @@ describe("plugin hook registration", () => {
     ];
     for (const name of expected) {
       expect(hooks.has(name), `hook ${name} should be registered`).toBe(true);
+    }
+  });
+
+  it("gateway_start restores persisted risk state when enabled", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prism-risk-restore-"));
+    const riskFile = join(dir, "risk-state.json");
+    try {
+      riskBySession.clear();
+      const now = Date.now();
+      writeFileSync(riskFile, JSON.stringify({
+        version: 1,
+        savedAt: new Date(now).toISOString(),
+        entries: [
+          {
+            key: "restored-session",
+            score: 33,
+            reasons: ["persisted"],
+            expiresAt: now + 120_000,
+          },
+        ],
+      }) + "\n");
+
+      const mock = createMockApi({ persistRiskState: true, riskStateFile: riskFile });
+      register(mock.api);
+      const gatewayStart = getHook(mock.hooks, "gateway_start");
+      gatewayStart();
+
+      expect(riskBySession.get("restored-session")?.score).toBe(33);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

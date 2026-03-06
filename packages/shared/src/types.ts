@@ -12,6 +12,8 @@ export type SessionRisk = {
 
 export type SecurityConfig = {
   riskTtlMs?: number;
+  persistRiskState?: boolean;
+  riskStateFile?: string;
   maxScanChars?: number;
   scanTools?: string[];
   protectedPathPatterns?: string[];

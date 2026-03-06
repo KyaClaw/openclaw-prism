@@ -7,6 +7,8 @@
     "additionalProperties": false,
     "properties": {
       "riskTtlMs": { "type": "integer", "minimum": 1000, "default": 180000 },
+      "persistRiskState": { "type": "boolean", "default": true },
+      "riskStateFile": { "type": "string" },
       "maxScanChars": { "type": "integer", "minimum": 256, "default": 20000 },
       "scanTools": {
         "type": "array",
