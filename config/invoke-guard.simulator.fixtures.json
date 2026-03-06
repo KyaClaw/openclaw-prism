@@ -1,0 +1,62 @@
+[
+  {
+    "name": "allow-read-for-owned-session",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "read",
+      "sessionKey": "agent:example:1",
+      "args": { "path": "/tmp/demo.txt" }
+    },
+    "expect": {
+      "allow": true,
+      "status": 200,
+      "reasonCode": "allow",
+      "matchedRulePath": "clients[0].allowTools[1]"
+    }
+  },
+  {
+    "name": "deny-tool-not-allowlisted",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "exec",
+      "sessionKey": "agent:example:2",
+      "args": { "command": "echo hello" }
+    },
+    "expect": {
+      "allow": false,
+      "status": 403,
+      "reasonCode": "tool-not-allowed",
+      "matchedRulePath": "clients[0].allowTools"
+    }
+  },
+  {
+    "name": "deny-session-prefix-mismatch",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "read",
+      "sessionKey": "other:1",
+      "args": { "path": "/tmp/demo.txt" }
+    },
+    "expect": {
+      "allow": false,
+      "status": 403,
+      "reasonCode": "session-prefix-mismatch",
+      "matchedRulePath": "clients[0].allowedSessionPrefixes"
+    }
+  },
+  {
+    "name": "deny-unauthorized-token",
+    "token": "wrong-token",
+    "request": {
+      "tool": "read",
+      "sessionKey": "agent:example:3",
+      "args": { "path": "/tmp/demo.txt" }
+    },
+    "expect": {
+      "allow": false,
+      "status": 401,
+      "reasonCode": "unauthorized-caller",
+      "matchedRulePath": "clients[*].token"
+    }
+  }
+]

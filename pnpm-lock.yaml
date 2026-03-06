@@ -23,6 +23,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@kyaclaw/proxy':
+        specifier: workspace:*
+        version: link:../proxy
       '@kyaclaw/shared':
         specifier: workspace:*
         version: link:../shared

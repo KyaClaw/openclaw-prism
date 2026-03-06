@@ -14,6 +14,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@kyaclaw/proxy": "workspace:*",
     "@kyaclaw/shared": "workspace:*",
     "commander": "^13",
     "tsx": "^4"

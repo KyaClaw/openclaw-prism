@@ -202,6 +202,8 @@ curl -X POST http://127.0.0.1:18766/scan \
 PRISM_CLI="node /opt/openclaw-prism/packages/cli/dist/index.js"
 $PRISM_CLI status
 $PRISM_CLI verify
+$PRISM_CLI policy simulate --token "$PRISM_PROXY_CLIENT_TOKEN" --request '{"tool":"read","sessionKey":"agent:example:sim","args":{"path":"/tmp/demo.txt"}}'
+$PRISM_CLI policy test-fixtures
 $PRISM_CLI audit tail -n 20
 $PRISM_CLI audit verify
 ```
@@ -230,6 +232,25 @@ Controls:
 - allowed/denied tools
 - upstream gateway target
 - scanner fail-open/fail-close behavior
+
+### Policy simulator (dry-run + explain)
+
+Use the simulator to validate policy changes before SIGHUP reload:
+
+```bash
+PRISM_CLI="node /opt/openclaw-prism/packages/cli/dist/index.js"
+
+# single request simulation (offline, deterministic explain)
+$PRISM_CLI policy simulate \
+  --policy ./config/invoke-guard.policy.json \
+  --token "replace-with-long-random-token" \
+  --request '{"tool":"read","sessionKey":"agent:example:sim","args":{"path":"/tmp/demo.txt"}}'
+
+# fixture regression suite (versioned in repo)
+$PRISM_CLI policy test-fixtures \
+  --policy ./config/invoke-guard.policy.json \
+  --fixtures ./config/invoke-guard.simulator.fixtures.json
+```
 
 ### Plugin config schema
 

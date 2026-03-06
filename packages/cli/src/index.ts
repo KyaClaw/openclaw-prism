@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
 import { verifyAuditChain } from "@kyaclaw/shared/audit";
+import { runPolicyFixtureSuite, runPolicySimulation } from "./policy.js";
 import { runVerify } from "./verify.js";
 
 // Auto-load .env from install directory
@@ -26,6 +27,8 @@ const AUDIT_DIR = join(homedir(), ".openclaw", "security");
 const AUDIT_LOG = join(AUDIT_DIR, "audit.jsonl");
 const VERIFY_SCANNER_URL = process.env.PRISM_VERIFY_SCANNER_URL ?? "http://127.0.0.1:18766/scan";
 const VERIFY_PROXY_URL = process.env.PRISM_VERIFY_PROXY_URL ?? "http://127.0.0.1:18767/healthz";
+const DEFAULT_POLICY_PATH = process.env.INVOKE_GUARD_POLICY ?? "./config/invoke-guard.policy.json";
+const DEFAULT_POLICY_FIXTURES = "./config/invoke-guard.simulator.fixtures.json";
 
 const program = new Command();
 program
@@ -111,6 +114,49 @@ program
       scannerToken: process.env.SCANNER_AUTH_TOKEN,
     });
     if (exitCode > 0) process.exitCode = exitCode;
+  });
+
+// ── policy subcommands ──
+const policy = program.command("policy").description("Invoke-guard policy simulator");
+
+policy
+  .command("simulate")
+  .requiredOption("--token <token>", "Caller token to simulate")
+  .option("--policy <path>", "Policy file path", DEFAULT_POLICY_PATH)
+  .option("--request <json>", "Invoke request JSON payload")
+  .option("--request-file <path>", "Path to invoke request JSON file")
+  .description("Dry-run one /tools/invoke request and explain allow/deny rule path")
+  .action((opts: { token: string; policy: string; request?: string; requestFile?: string }) => {
+    try {
+      const result = runPolicySimulation({
+        token: opts.token,
+        policyPath: opts.policy,
+        requestJson: opts.request,
+        requestFile: opts.requestFile,
+      });
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    } catch (err) {
+      process.stderr.write(`[policy] ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
+  });
+
+policy
+  .command("test-fixtures")
+  .option("--policy <path>", "Policy file path", DEFAULT_POLICY_PATH)
+  .option("--fixtures <path>", "Fixture file path", DEFAULT_POLICY_FIXTURES)
+  .description("Run fixture regression tests for invoke-guard policy decisions")
+  .action((opts: { policy: string; fixtures: string }) => {
+    try {
+      const result = runPolicyFixtureSuite({
+        policyPath: opts.policy,
+        fixturesPath: opts.fixtures,
+      });
+      if (result.failed > 0) process.exitCode = 1;
+    } catch (err) {
+      process.stderr.write(`[policy] ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
   });
 
 // ── audit subcommands ──
