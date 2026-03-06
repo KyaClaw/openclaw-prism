@@ -1,5 +1,7 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { basename, isAbsolute, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { heuristicScan } from "@kyaclaw/shared/heuristics";
 import { auditLog } from "@kyaclaw/shared/audit";
 import type { SessionRisk, ScanVerdict, SecurityConfig } from "@kyaclaw/shared/types";
@@ -8,6 +10,20 @@ import type { SessionRisk, ScanVerdict, SecurityConfig } from "@kyaclaw/shared/t
 const riskBySession = new Map<string, SessionRisk>();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 const SWEEP_INTERVAL_MS = 60_000;
+const DEFAULT_RISK_STATE_FILE = join(homedir(), ".openclaw", "security", "session-risk.json");
+let riskPersistenceEnabled = false;
+let riskStateFilePath = DEFAULT_RISK_STATE_FILE;
+
+type PersistedRiskState = {
+  version: number;
+  savedAt: string;
+  entries: Array<{
+    key: string;
+    score: number;
+    reasons: string[];
+    expiresAt: number;
+  }>;
+};
 
 function getSessionRisk(key?: string): SessionRisk | null {
   if (!key) return null;
@@ -27,6 +43,7 @@ function bumpRisk(key: string, reasons: string[], ttlMs: number, delta: number) 
     reasons: [...new Set([...base.reasons, ...reasons])],
     expiresAt: Date.now() + ttlMs,
   });
+  persistRiskStateIfEnabled();
 }
 
 /** Sweep all expired entries from riskBySession (prevents unbounded map growth). */
@@ -39,6 +56,7 @@ function sweepExpired(): number {
       swept++;
     }
   }
+  if (swept > 0) persistRiskStateIfEnabled();
   return swept;
 }
 
@@ -55,6 +73,89 @@ function stopSweepTimer(): void {
   if (sweepTimer) {
     clearInterval(sweepTimer);
     sweepTimer = null;
+  }
+}
+
+function resolveRiskStatePath(path?: string): string {
+  const raw = path?.trim();
+  if (!raw) return DEFAULT_RISK_STATE_FILE;
+  const expanded = raw.startsWith("~/")
+    ? join(homedir(), raw.slice(2))
+    : raw;
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(process.cwd(), expanded);
+}
+
+function persistRiskStateToFile(
+  filePath: string,
+  map: Map<string, SessionRisk>,
+  now = Date.now(),
+): number {
+  const entries: PersistedRiskState["entries"] = [];
+  for (const [key, risk] of map) {
+    if (risk.expiresAt < now) {
+      map.delete(key);
+      continue;
+    }
+    entries.push({
+      key,
+      score: risk.score,
+      reasons: [...risk.reasons],
+      expiresAt: risk.expiresAt,
+    });
+  }
+
+  const payload: PersistedRiskState = {
+    version: 1,
+    savedAt: new Date(now).toISOString(),
+    entries,
+  };
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tmpFile = `${filePath}.tmp`;
+  writeFileSync(tmpFile, JSON.stringify(payload) + "\n");
+  renameSync(tmpFile, filePath);
+  return entries.length;
+}
+
+function loadRiskStateFromFile(
+  filePath: string,
+  map: Map<string, SessionRisk>,
+  now = Date.now(),
+): number {
+  try {
+    if (!existsSync(filePath)) return 0;
+    const parsed = JSON.parse(readFileSync(filePath, "utf8")) as Partial<PersistedRiskState>;
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    let loaded = 0;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      const key = (entry as Record<string, unknown>).key;
+      const score = (entry as Record<string, unknown>).score;
+      const reasons = (entry as Record<string, unknown>).reasons;
+      const expiresAt = (entry as Record<string, unknown>).expiresAt;
+      if (typeof key !== "string" || !key) continue;
+      if (typeof score !== "number" || !Number.isFinite(score)) continue;
+      if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt) || expiresAt < now) continue;
+      if (!Array.isArray(reasons)) continue;
+      map.set(key, {
+        score,
+        reasons: reasons.map(String),
+        expiresAt,
+      });
+      loaded++;
+    }
+    return loaded;
+  } catch {
+    return 0;
+  }
+}
+
+function persistRiskStateIfEnabled(): void {
+  if (!riskPersistenceEnabled) return;
+  try {
+    persistRiskStateToFile(riskStateFilePath, riskBySession);
+  } catch {
+    // Avoid hard-failing core security hooks due persistence I/O errors.
   }
 }
 
@@ -345,6 +446,10 @@ const DEFAULT_SCAN_TOOLS = new Set(["web_fetch", "browser"]);
 
 export default function register(api: OpenClawPluginApi) {
   const cfg = (api.pluginConfig ?? {}) as SecurityConfig;
+  riskPersistenceEnabled = cfg.persistRiskState !== false;
+  riskStateFilePath = resolveRiskStatePath(
+    cfg.riskStateFile ?? process.env.PRISM_RISK_STATE_FILE,
+  );
   const riskTtlMs = cfg.riskTtlMs ?? 180_000;
   const maxScan = cfg.maxScanChars ?? 20_000;
   const scanTools = new Set(
@@ -566,18 +671,31 @@ export default function register(api: OpenClawPluginApi) {
 
   // ── Hook 9: session_end → cleanup ──
   api.on("session_end", (event) => {
-    if (event.sessionKey) riskBySession.delete(event.sessionKey);
+    if (event.sessionKey && riskBySession.delete(event.sessionKey)) {
+      persistRiskStateIfEnabled();
+    }
   });
 
   // ── Hook 10: gateway_start → startup self-check + start periodic sweep ──
   api.on("gateway_start", () => {
+    if (riskPersistenceEnabled) {
+      const loaded = loadRiskStateFromFile(riskStateFilePath, riskBySession);
+      if (loaded > 0) {
+        api.logger?.info?.(`[security] restored ${loaded} risk entries from ${riskStateFilePath}`);
+      }
+      // Persist after startup to compact expired/invalid entries immediately.
+      persistRiskStateIfEnabled();
+    }
     startSweepTimer();
     api.logger?.info?.("[security] openclaw-prism security plugin active — all hooks registered");
   });
 }
 
 // Export internals for testing
-export { riskBySession, getSessionRisk, bumpRisk, sweepExpired, stopSweepTimer };
+export {
+  riskBySession, getSessionRisk, bumpRisk, sweepExpired, stopSweepTimer,
+  resolveRiskStatePath, persistRiskStateToFile, loadRiskStateFromFile,
+};
 export {
   normalizeToolName, firstStringParam, collectPaths,
   isProtectedPath, parseExecCommand, firstExecutable, execTrampolineReason,
