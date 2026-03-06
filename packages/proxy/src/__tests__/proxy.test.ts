@@ -133,6 +133,39 @@ describe("Invoke Guard Proxy", () => {
     expect(body.error).toContain("dangerous exec");
   });
 
+  it("returns 403 for shell trampoline exec", async () => {
+    const resp = await postInvoke(port, {
+      tool: "exec",
+      sessionKey: "user-a:1",
+      args: { command: "/bin/bash -c whoami" },
+    });
+    expect(resp.status).toBe(403);
+    const body = await resp.json() as { error: string };
+    expect(body.error).toContain("shell-trampoline");
+  });
+
+  it("returns 403 for git ssh override trampoline", async () => {
+    const resp = await postInvoke(port, {
+      tool: "exec",
+      sessionKey: "user-a:1",
+      args: { command: "git -c core.sshCommand=evil push origin main" },
+    });
+    expect(resp.status).toBe(403);
+    const body = await resp.json() as { error: string };
+    expect(body.error).toContain("git-ssh-override");
+  });
+
+  it("returns 403 for inline interpreter trampoline", async () => {
+    const resp = await postInvoke(port, {
+      tool: "exec",
+      sessionKey: "user-a:1",
+      args: { command: "node --eval process.exit" },
+    });
+    expect(resp.status).toBe(403);
+    const body = await resp.json() as { error: string };
+    expect(body.error).toContain("interpreter-inline-code");
+  });
+
   it("returns 500 when upstream token env is not set", async () => {
     // read is allowed, session prefix matches, but no upstream token
     delete process.env.TEST_UPSTREAM_TOKEN;

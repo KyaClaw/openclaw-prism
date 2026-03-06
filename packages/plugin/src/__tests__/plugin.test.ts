@@ -12,7 +12,9 @@ import register, {
   firstStringParam,
   collectPaths,
   isProtectedPath,
+  parseExecCommand,
   firstExecutable,
+  execTrampolineReason,
   hasShellMetacharacters,
   extractText,
   redactMessage,
@@ -84,6 +86,19 @@ describe("plugin utilities", () => {
     expect(firstExecutable("FOO=1 git status")).toBe("git");
     expect(firstExecutable("env -i FOO=1 git status")).toBe("git");
     expect(firstExecutable("env -i bash -c id")).toBe("bash");
+  });
+
+  it("parseExecCommand handles quoted args and env assignments", () => {
+    const parsed = parseExecCommand("env -i GIT_SSH_COMMAND='ssh -oProxyCommand=evil' /usr/bin/git -c \"core.sshCommand=evil\" push");
+    expect(parsed?.executable).toBe("git");
+    expect(parsed?.argv).toContain("-c");
+    expect(parsed?.argv).toContain("core.sshCommand=evil");
+    expect(parsed?.assignments).toContain("GIT_SSH_COMMAND=ssh -oProxyCommand=evil");
+  });
+
+  it("execTrampolineReason detects git ssh override and shell trampolines", () => {
+    expect(execTrampolineReason("git -c core.sshCommand=evil push")).toContain("git ssh trampoline");
+    expect(execTrampolineReason("/bin/bash -c whoami")).toContain("shell trampoline");
   });
 
   it("hasShellMetacharacters detects shell control chars", () => {
@@ -234,7 +249,27 @@ describe("plugin hook registration", () => {
       { sessionKey: "s1", toolName: "exec" },
     );
     expect(result?.block).toBe(true);
-    expect(result?.blockReason).toContain("not in whitelist");
+    expect(result?.blockReason).toContain("trampoline");
+  });
+
+  it("before_tool_call blocks git ssh command override", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "exec", params: { command: "git -c core.sshCommand=evil push origin main" } },
+      { sessionKey: "s1", toolName: "exec" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("git ssh trampoline");
+  });
+
+  it("before_tool_call blocks inline interpreter trampolines", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "exec", params: { command: "node --eval process.exit" } },
+      { sessionKey: "s1", toolName: "exec" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("inline code trampoline");
   });
 
   it("before_tool_call blocks shell metacharacters", () => {
