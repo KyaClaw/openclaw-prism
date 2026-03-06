@@ -2,7 +2,7 @@
 import http from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { listBlockEvents, CursorNotFoundError, parseCursor } from "./audit-reader.js";
 import {
   readConfigStore,
@@ -21,6 +21,7 @@ import {
   AllowActionMismatchError,
   ConfirmationRequiredError,
 } from "./allow-actions.js";
+import { generateHtml } from "./html.js";
 
 const HOST = process.env.DASHBOARD_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.DASHBOARD_PORT ?? "18768");
@@ -158,13 +159,14 @@ export function createServer() {
 
     // HTML page — no auth required (token entered in browser)
     if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-      // TODO: Phase 4 — return nonce-based CSP embedded HTML
+      const nonce = randomBytes(16).toString("base64");
       res.statusCode = 200;
       res.setHeader("content-type", "text/html; charset=utf-8");
-      res.end(
-        "<!DOCTYPE html><html><head><title>PRISM Dashboard</title></head>" +
-        "<body><h1>PRISM Dashboard</h1><p>Pending Phase 4 implementation.</p></body></html>",
+      res.setHeader(
+        "content-security-policy",
+        `default-src 'self'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`,
       );
+      res.end(generateHtml(nonce));
       return;
     }
 
