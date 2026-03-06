@@ -208,6 +208,21 @@ $PRISM_CLI audit tail -n 20
 $PRISM_CLI audit verify
 ```
 
+## Dashboard
+
+PRISM Dashboard provides:
+- block event timeline (`exec_whitelist_block`, `path_block`, `exec_pattern_block`, `outbound_secret_blocked`, etc.)
+- one-click `Allow` workflow with risk-aware confirmation
+- live component probes with online/offline indicators at the top (green = online, red = offline)
+
+### Blocks view (simulated security events)
+
+![PRISM Dashboard Blocks](docs/images/dashboard-sim-blocks.png)
+
+### Config view (policy tuning)
+
+![PRISM Dashboard Config](docs/images/dashboard-sim-config.png)
+
 ## Runtime Configuration
 
 ### Environment file
