@@ -226,6 +226,20 @@ describe("dashboard HTTP APIs", () => {
     expect(applyBody.ok).toBe(true);
     expect(applyBody.revision).toMatch(/^[0-9a-f]{16}$/);
 
+    const refreshedBlocks = await fetch(`http://127.0.0.1:${port}/api/blocks?limit=10`, {
+      headers: { authorization: "Bearer dashboard-test-token" },
+    });
+    expect(refreshedBlocks.status).toBe(200);
+    const refreshedBody = await refreshedBlocks.json() as {
+      blocks: Array<{
+        event: string;
+        allowAction: { supported: boolean; alreadyApplied?: boolean };
+      }>;
+    };
+    const pathBlock = refreshedBody.blocks.find((block) => block.event === "path_block");
+    expect(pathBlock?.allowAction.supported).toBe(true);
+    expect(pathBlock?.allowAction.alreadyApplied).toBe(true);
+
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(delegated.some((event) => event.event === "dashboard_config_updated")).toBe(true);
     expect(delegated.some((event) => event.event === "dashboard_allow_applied")).toBe(true);
