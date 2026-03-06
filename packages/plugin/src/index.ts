@@ -313,11 +313,14 @@ async function scanRemote(url: string, text: string, timeoutMs: number): Promise
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const scannerAuthToken = process.env.SCANNER_AUTH_TOKEN ?? "";
+    if (!scannerAuthToken) {
+      throw new Error("SCANNER_AUTH_TOKEN is required");
+    }
     const resp = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(scannerAuthToken ? { authorization: `Bearer ${scannerAuthToken}` } : {}),
+        authorization: `Bearer ${scannerAuthToken}`,
       },
       body: JSON.stringify({ text }),
       signal: ctrl.signal,
