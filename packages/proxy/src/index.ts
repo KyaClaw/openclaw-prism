@@ -270,6 +270,9 @@ async function scanResultText(
   timeoutMs: number,
   scannerAuthToken?: string,
 ): Promise<{ verdict: string; reasons: string[] }> {
+  if (!scannerAuthToken) {
+    throw new Error("SCANNER_AUTH_TOKEN is required");
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -277,7 +280,7 @@ async function scanResultText(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(scannerAuthToken ? { authorization: `Bearer ${scannerAuthToken}` } : {}),
+        authorization: `Bearer ${scannerAuthToken}`,
       },
       body: JSON.stringify({ text }),
       signal: controller.signal,

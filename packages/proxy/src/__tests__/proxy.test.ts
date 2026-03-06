@@ -1,6 +1,7 @@
-import { describe, it, expect, afterAll, vi, beforeEach } from "vitest";
+import { describe, it, expect, afterAll, afterEach, beforeEach } from "vitest";
 import { createServer } from "../index.js";
 import type { Policy } from "../index.js";
+import { createServer as createHttpServer } from "node:http";
 import type http from "node:http";
 
 const TEST_POLICY: Policy = {
@@ -32,6 +33,21 @@ function postInvoke(
     },
     body: JSON.stringify(body),
   });
+}
+
+async function startHttpServer(
+  handler: (req: http.IncomingMessage, res: http.ServerResponse) => void,
+): Promise<{ server: http.Server; port: number }> {
+  const server = createHttpServer(handler);
+  await new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => reject(err);
+    server.once("error", onError);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+  return { server, port: (server.address() as { port: number }).port };
 }
 
 describe("Invoke Guard Proxy", () => {
@@ -191,5 +207,166 @@ describe("Invoke Guard Proxy", () => {
     const body = await resp.json() as { error: string };
     expect(body.error).toContain("upstream unavailable");
     delete process.env.TEST_UPSTREAM_TOKEN;
+  });
+});
+
+describe("Invoke Guard Proxy scanner auth contract", () => {
+  let upstream: http.Server | null = null;
+  let scanner: http.Server | null = null;
+  let proxy: http.Server | null = null;
+  let proxyPort = 0;
+
+  afterEach(async () => {
+    for (const server of [proxy, scanner, upstream]) {
+      if (server) {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    }
+    proxy = null;
+    scanner = null;
+    upstream = null;
+    delete process.env.TEST_UPSTREAM_TOKEN;
+    delete process.env.SCANNER_AUTH_TOKEN;
+  });
+
+  async function bootProxyWithScanner(opts: {
+    expectedScannerAuth: string;
+    scannerStatus?: number;
+    scannerBody?: Record<string, unknown>;
+  }): Promise<{ scannerAuthSeen: () => string; scannerHits: () => number }> {
+    let authHeaderSeen = "";
+    let scannerCallCount = 0;
+
+    const upstreamServer = await startHttpServer((req, res) => {
+      if (req.method === "POST" && req.url === "/tools/invoke") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ ok: true, result: "safe text" }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false }));
+    });
+    upstream = upstreamServer.server;
+
+    const scannerServer = await startHttpServer((req, res) => {
+      if (req.method === "POST" && req.url === "/scan") {
+        scannerCallCount++;
+        authHeaderSeen = String(req.headers.authorization ?? "");
+        if (authHeaderSeen !== `Bearer ${opts.expectedScannerAuth}`) {
+          res.statusCode = 401;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ error: "unauthorized" }));
+          return;
+        }
+        res.statusCode = opts.scannerStatus ?? 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(opts.scannerBody ?? { verdict: "benign", reasons: [] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false }));
+    });
+    scanner = scannerServer.server;
+
+    process.env.TEST_UPSTREAM_TOKEN = "upstream-secret";
+    const policy: Policy = {
+      host: "127.0.0.1",
+      port: 0,
+      upstreamUrl: `http://127.0.0.1:${upstreamServer.port}`,
+      upstreamTokenEnv: "TEST_UPSTREAM_TOKEN",
+      defaultDenyTools: ["gateway"],
+      scannerUrl: `http://127.0.0.1:${scannerServer.port}/scan`,
+      scannerTimeoutMs: 1200,
+      blockOnScannerFailure: true,
+      clients: [
+        {
+          id: "scanner-contract-client",
+          token: "test-token-123",
+          allowedSessionPrefixes: ["user-a:"],
+          allowTools: ["web_fetch"],
+        },
+      ],
+    };
+
+    const created = createServer(policy);
+    proxy = created.server;
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: Error) => reject(err);
+      created.server.once("error", onError);
+      created.server.listen(0, "127.0.0.1", () => {
+        created.server.off("error", onError);
+        proxyPort = (created.server.address() as { port: number }).port;
+        resolve();
+      });
+    });
+
+    return {
+      scannerAuthSeen: () => authHeaderSeen,
+      scannerHits: () => scannerCallCount,
+    };
+  }
+
+  it("forwards scanner bearer token from SCANNER_AUTH_TOKEN", async () => {
+    process.env.SCANNER_AUTH_TOKEN = "scanner-good";
+    const state = await bootProxyWithScanner({ expectedScannerAuth: "scanner-good" });
+
+    const resp = await postInvoke(proxyPort, {
+      tool: "web_fetch",
+      sessionKey: "user-a:scan1",
+      args: { url: "https://example.com" },
+    });
+    expect(resp.status).toBe(200);
+    expect(state.scannerHits()).toBe(1);
+    expect(state.scannerAuthSeen()).toBe("Bearer scanner-good");
+  });
+
+  it("fails closed when SCANNER_AUTH_TOKEN is missing", async () => {
+    delete process.env.SCANNER_AUTH_TOKEN;
+    const state = await bootProxyWithScanner({ expectedScannerAuth: "scanner-good" });
+
+    const resp = await postInvoke(proxyPort, {
+      tool: "web_fetch",
+      sessionKey: "user-a:scan2",
+      args: { url: "https://example.com" },
+    });
+    expect(resp.status).toBe(503);
+    expect(state.scannerHits()).toBe(0);
+    const body = await resp.json() as { error: string };
+    expect(body.error).toContain("SCANNER_AUTH_TOKEN is required");
+  });
+
+  it("fails closed on scanner 401 due to invalid token", async () => {
+    process.env.SCANNER_AUTH_TOKEN = "scanner-bad";
+    const state = await bootProxyWithScanner({ expectedScannerAuth: "scanner-good" });
+
+    const resp = await postInvoke(proxyPort, {
+      tool: "web_fetch",
+      sessionKey: "user-a:scan3",
+      args: { url: "https://example.com" },
+    });
+    expect(resp.status).toBe(503);
+    expect(state.scannerHits()).toBe(1);
+    const body = await resp.json() as { error: string };
+    expect(body.error).toContain("scanner status=401");
+  });
+
+  it("fails closed on scanner non-200 responses", async () => {
+    process.env.SCANNER_AUTH_TOKEN = "scanner-good";
+    const state = await bootProxyWithScanner({
+      expectedScannerAuth: "scanner-good",
+      scannerStatus: 503,
+      scannerBody: { error: "unavailable" },
+    });
+
+    const resp = await postInvoke(proxyPort, {
+      tool: "web_fetch",
+      sessionKey: "user-a:scan4",
+      args: { url: "https://example.com" },
+    });
+    expect(resp.status).toBe(503);
+    expect(state.scannerHits()).toBe(1);
+    const body = await resp.json() as { error: string };
+    expect(body.error).toContain("scanner status=503");
   });
 });
