@@ -74,7 +74,7 @@ Critical files are watched via `chokidar` events **plus** periodic SHA-256 recon
 </td>
 <td>
 
-### :test_tube: 132 Tests — 1:1 Test-to-Source Ratio
+### :test_tube: 132 Tests
 
 Every security-critical path is tested: hook registration, risk thresholds, cross-session isolation, tool blocking, token auth, session ownership, exec patterns, allow-state persistence, component health probes, and audit HMAC chain verification. Tests use proper mocking, boundary-condition checks, and both positive and negative cases.
 
@@ -176,7 +176,7 @@ PRISM registers 10 OpenClaw hooks:
 | `before_tool_call` | Pre-execution | Exec whitelist/blocklist, path protection, network block, risk escalation block |
 | `after_tool_call` | Post-execution | Remote scanner cascade on tool results |
 | `tool_result_persist` | Persistence | Redact tool results containing injection patterns |
-| `before_message_write` | Pre-write | (reserved) |
+| `before_message_write` | Pre-write | Last-hop injection scan, block suspicious writes |
 | `message_sending` | Outbound | DLP secret scan, risk-based outbound block |
 | `subagent_spawning` | Sub-agent | Block spawning at risk >= 25 |
 | `session_end` | Teardown | Persist risk state, clean up session data |
