@@ -23,6 +23,9 @@ import register, {
   firstExecutable,
   execTrampolineReason,
   hasShellMetacharacters,
+  normalizeHost,
+  normalizeDomainEntry,
+  matchesDomainList,
   extractText,
   redactMessage,
 } from "../index.js";
@@ -111,6 +114,30 @@ describe("plugin utilities", () => {
   it("hasShellMetacharacters detects shell control chars", () => {
     expect(hasShellMetacharacters("git status")).toBe(false);
     expect(hasShellMetacharacters("git status && whoami")).toBe(true);
+  });
+
+  it("normalizeHost extracts lowercase hostname from URL", () => {
+    expect(normalizeHost("https://Webhook.Site/abc")).toBe("webhook.site");
+    expect(normalizeHost("http://sub.ngrok.io:8080/path")).toBe("sub.ngrok.io");
+    expect(normalizeHost("not-a-url")).toBe("");
+  });
+
+  it("normalizeDomainEntry trims, lowercases, strips trailing dot, and handles punycode", () => {
+    expect(normalizeDomainEntry("  Webhook.Site.  ")).toBe("webhook.site");
+    expect(normalizeDomainEntry("NGROK.IO")).toBe("ngrok.io");
+    expect(normalizeDomainEntry("")).toBe("");
+    expect(normalizeDomainEntry("   ")).toBe("");
+    // Punycode normalization via URL API
+    expect(normalizeDomainEntry("example.com")).toBe("example.com");
+  });
+
+  it("matchesDomainList matches exact and subdomain", () => {
+    const domains = ["webhook.site", "ngrok.io"];
+    expect(matchesDomainList("webhook.site", domains)).toBe("webhook.site");
+    expect(matchesDomainList("sub.webhook.site", domains)).toBe("webhook.site");
+    expect(matchesDomainList("abc.def.ngrok.io", domains)).toBe("ngrok.io");
+    expect(matchesDomainList("example.com", domains)).toBeNull();
+    expect(matchesDomainList("notwebhook.site", domains)).toBeNull();
   });
 
   it("extractText handles string content", () => {
@@ -420,6 +447,50 @@ describe("plugin hook registration", () => {
     expect(result?.blockReason).toContain("private-network");
   });
 
+  it("before_tool_call blocks Tier A exfiltration domains", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "web_fetch", params: { url: "https://webhook.site/abc-123" } },
+      { sessionKey: "s1", toolName: "web_fetch" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("blocked exfiltration domain");
+    expect(result?.blockReason).toContain("webhook.site");
+  });
+
+  it("before_tool_call blocks Tier A subdomain matches", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "browser", params: { url: "https://my.requestbin.com/r/abc" } },
+      { sessionKey: "s1", toolName: "browser" },
+    );
+    expect(result?.block).toBe(true);
+    expect(result?.blockReason).toContain("requestbin.com");
+  });
+
+  it("before_tool_call bumps risk for Tier B risky domains without blocking", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "web_fetch", params: { url: "https://abc123.ngrok.io/webhook" } },
+      { sessionKey: "s-risky-domain", toolName: "web_fetch" },
+    );
+    // Tier B does NOT block
+    expect(result?.block).toBeUndefined();
+    // But does bump risk
+    expect(riskBySession.has("s-risky-domain")).toBe(true);
+    expect(riskBySession.get("s-risky-domain")!.score).toBeGreaterThanOrEqual(15);
+    expect(riskBySession.get("s-risky-domain")!.reasons).toContain("risky-domain:ngrok.io");
+  });
+
+  it("before_tool_call allows normal URLs through scan tools", () => {
+    const handler = getHook(hooks, "before_tool_call");
+    const result = handler(
+      { toolName: "web_fetch", params: { url: "https://docs.github.com/en" } },
+      { sessionKey: "s1", toolName: "web_fetch" },
+    );
+    expect(result?.block).toBeUndefined();
+  });
+
   it("before_tool_call still blocks when audit logging throws", () => {
     vi.mocked(auditLog).mockImplementation(() => {
       throw new Error("OPENCLAW_AUDIT_HMAC_KEY environment variable is required for audit logging");
@@ -503,6 +574,24 @@ describe("plugin hook registration", () => {
     const handler = getHook(hooks, "message_sending");
     const result = handler(
       { to: "user", content: "Here is the key: ghp_abcdefghijklmnopqrstuvwxyz012345" },
+      { channelId: "test" },
+    );
+    expect(result?.cancel).toBe(true);
+  });
+
+  it("message_sending blocks GitLab personal access token", () => {
+    const handler = getHook(hooks, "message_sending");
+    const result = handler(
+      { to: "user", content: "Token: glpat-xxxxxxxxxxxxxxxxxxxx" },
+      { channelId: "test" },
+    );
+    expect(result?.cancel).toBe(true);
+  });
+
+  it("message_sending blocks GitHub OAuth token", () => {
+    const handler = getHook(hooks, "message_sending");
+    const result = handler(
+      { to: "user", content: "Token: gho_abcdefghijklmnopqrstuvwxyz012345" },
       { channelId: "test" },
     );
     expect(result?.cancel).toBe(true);

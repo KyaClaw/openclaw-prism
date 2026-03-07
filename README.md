@@ -2,7 +2,7 @@
   <img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22+">
   <img src="https://img.shields.io/badge/TypeScript-5.7%2B-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="License">
-  <img src="https://img.shields.io/badge/Tests-132%20passed-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-142%20passed-brightgreen" alt="Tests">
   <br><br>
   <a href="https://buymeacoffee.com/kyaclaw" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 </p>
@@ -74,7 +74,7 @@ Critical files are watched via `chokidar` events **plus** periodic SHA-256 recon
 </td>
 <td>
 
-### :test_tube: 132 Tests
+### :test_tube: 142 Tests
 
 Every security-critical path is tested: hook registration, risk thresholds, cross-session isolation, tool blocking, token auth, session ownership, exec patterns, allow-state persistence, component health probes, and audit HMAC chain verification. Tests use proper mocking, boundary-condition checks, and both positive and negative cases.
 
@@ -84,7 +84,9 @@ Every security-critical path is tested: hook registration, risk thresholds, cros
 
 ## What It Adds
 
-PRISM runs as one OpenClaw plugin plus four sidecar services:
+PRISM runs as one OpenClaw plugin plus four sidecar services.
+
+> **Note:** PRISM does not manage OpenClaw core configuration. For gateway config diagnostics, use `openclaw doctor` (or `openclaw doctor --fix` for auto-repair).
 
 | Component | Type | Purpose | Port |
 | --- | --- | --- | --- |
@@ -157,10 +159,12 @@ Before tool calls, plugin enforces:
 - shell metacharacter rejection (`; & | $ \``)
 - protected path checks for file tools (`read`, `write`, `edit`, `apply_patch`)
 - private-network URL block for configured scan tools (`web_fetch`, `browser`)
+- **Tier A domain blocking** — exfil endpoints (`webhook.site`, `requestbin.com`, `hookbin.com`, `interact.sh`, `burpcollaborator.net`) are hard-blocked
+- **Tier B risky domain flagging** — dual-use infrastructure (`ngrok.io`, `pipedream.net`) bumps session risk score without hard-blocking
 
 ### 5. Outbound DLP and audit integrity
 
-- Outbound messages are scanned for secret patterns (AWS key, private key blocks, Slack/GitHub/OpenAI tokens).
+- Outbound messages are scanned for secret patterns (AWS key, private key blocks, Slack/GitHub/GitLab/OpenAI/Stripe tokens).
 - Audit records are append-only JSONL with HMAC-SHA256 signatures and chained hashing (`_prev` field).
 - **Fail-closed enforcement**: if audit logging is unavailable (e.g., missing HMAC key), security blocks still execute — enforcement never depends on audit writes succeeding.
 - Verification is available via CLI `audit verify` (full chain walk + optional anchor verification).
@@ -346,6 +350,10 @@ pnpm install
 pnpm build
 pnpm test
 ```
+
+## Complementary Tools
+
+PRISM handles **runtime defense** (blocking attacks as they happen). For periodic system audits — scanning installed skills for known malware, checking CVE patch levels, and hardening OpenClaw gateway configuration — see [openclaw-security-monitor](https://github.com/adibirzu/openclaw-security-monitor).
 
 ## Uninstall
 

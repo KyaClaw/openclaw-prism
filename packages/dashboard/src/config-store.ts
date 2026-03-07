@@ -30,6 +30,8 @@ const KNOWN_KEYS = new Set([
   "scannerTimeoutMs",
   "blockOnScannerFailure",
   "outboundSecretPatterns",
+  "blockedDomains",
+  "riskyDomains",
 ]);
 
 const ARRAY_FIELDS = [
@@ -39,6 +41,8 @@ const ARRAY_FIELDS = [
   "execAllowedPrefixes",
   "execBlockedPatterns",
   "outboundSecretPatterns",
+  "blockedDomains",
+  "riskyDomains",
 ] as const;
 
 export type ValidationIssue = { field: string; message: string };
@@ -198,6 +202,29 @@ export function validateSecurityConfig(config: SecurityConfig): ValidationResult
         new RegExp(pattern);
       } catch (err) {
         pushError(errors, `${field}[${idx}]`, `invalid regex: ${(err as Error).message}`);
+      }
+    });
+  }
+
+  // Domain list validation: reject URLs, whitespace-only, entries with spaces
+  for (const [field, values] of [
+    ["blockedDomains", input.blockedDomains],
+    ["riskyDomains", input.riskyDomains],
+  ] as const) {
+    if (!Array.isArray(values)) continue;
+    values.forEach((entry, idx) => {
+      if (typeof entry !== "string") return;
+      const trimmed = entry.trim();
+      if (!trimmed) {
+        pushError(errors, `${field}[${idx}]`, "must be non-empty");
+        return;
+      }
+      if (/^https?:\/\//i.test(trimmed)) {
+        pushError(errors, `${field}[${idx}]`, "must be a domain, not a URL (e.g. \"example.com\" not \"https://example.com\")");
+        return;
+      }
+      if (/\s/.test(trimmed)) {
+        pushError(errors, `${field}[${idx}]`, "must not contain whitespace");
       }
     });
   }

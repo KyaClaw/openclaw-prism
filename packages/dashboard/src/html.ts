@@ -87,6 +87,8 @@ tr:hover{background:rgba(88,166,255,.04)}
 .hidden{display:none!important}
 .config-rev{margin-left:auto;font-size:12px;color:var(--text-muted)}
 .mt-8{margin-top:8px}
+.doctor-hint{padding:6px 20px;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);background:var(--bg)}
+.doctor-hint code{font-family:var(--mono);font-size:11px;color:var(--accent);background:rgba(88,166,255,.08);padding:1px 5px;border-radius:3px}
 </style>
 </head>
 <body>
@@ -104,6 +106,7 @@ tr:hover{background:rgba(88,166,255,.04)}
 <span class="token-display" id="token-display" title="Click to re-enter token"></span>
 </header>
 <div class="component-strip" id="component-strip"></div>
+<div class="doctor-hint">OpenClaw config diagnostics: <code>openclaw doctor</code> · Auto-fix (use with caution): <code>openclaw doctor --fix</code></div>
 
 <nav class="tabs">
 <button class="tab-btn active" data-tab="blocks">Blocks</button>
@@ -112,7 +115,7 @@ tr:hover{background:rgba(88,166,255,.04)}
 
 <div id="tab-blocks" class="tab-content active">
 <div class="filters">
-<select id="event-filter"><option value="">All Events</option><option value="exec_whitelist_block">exec_whitelist_block</option><option value="path_block">path_block</option><option value="exec_pattern_block">exec_pattern_block</option><option value="outbound_secret_blocked">outbound_secret_blocked</option><option value="risk_escalation_block">risk_escalation_block</option></select>
+<select id="event-filter"><option value="">All Events</option><option value="exec_whitelist_block">exec_whitelist_block</option><option value="path_block">path_block</option><option value="exec_pattern_block">exec_pattern_block</option><option value="outbound_secret_blocked">outbound_secret_blocked</option><option value="risk_escalation_block">risk_escalation_block</option><option value="blocked_domain">blocked_domain</option><option value="risky_domain_flagged">risky_domain_flagged</option></select>
 <input id="since-input" type="datetime-local" title="Since (start time)">
 <input id="session-input" placeholder="Session..." type="text" title="Filter by session ID">
 <input id="search-input" class="search-input" placeholder="Search..." type="text">
@@ -445,6 +448,8 @@ const ARRAY_FIELDS = [
   { key: 'execBlockedPatterns', label: 'Exec Blocked Patterns', regex: true },
   { key: 'outboundSecretPatterns', label: 'Outbound Secret Patterns', regex: true },
   { key: 'scanTools', label: 'Scan Tools' },
+  { key: 'blockedDomains', label: 'Blocked Domains (Tier A)' },
+  { key: 'riskyDomains', label: 'Risky Domains (Tier B)' },
 ];
 const SCALAR_FIELDS = [
   { key: 'riskTtlMs', label: 'Risk TTL (ms)', type: 'number' },

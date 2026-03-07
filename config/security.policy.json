@@ -33,6 +33,20 @@
     "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----",
     "xox[baprs]-[0-9A-Za-z-]{10,}",
     "ghp_[0-9A-Za-z]{30,}",
-    "sk-[A-Za-z0-9]{20,}"
+    "gho_[0-9A-Za-z]{30,}",
+    "glpat-[0-9A-Za-z_-]{20,}",
+    "sk-[A-Za-z0-9]{20,}",
+    "sk_live_[0-9A-Za-z]{20,}"
+  ],
+  "blockedDomains": [
+    "webhook.site",
+    "requestbin.com",
+    "hookbin.com",
+    "interact.sh",
+    "burpcollaborator.net"
+  ],
+  "riskyDomains": [
+    "ngrok.io",
+    "pipedream.net"
   ]
 }

@@ -387,6 +387,42 @@ function hasShellMetacharacters(command: string): boolean {
   return /[;&|`$()<>]/.test(command);
 }
 
+/** Normalize a URL host for domain matching: lowercase, strip trailing dot, use punycode via URL API. */
+function normalizeHost(urlString: string): string {
+  try {
+    const u = new URL(urlString);
+    return u.hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Normalize a domain entry from config to match normalizeHost() output.
+ * Uses new URL() for punycode parity, trims whitespace, strips trailing dots.
+ * Returns "" for invalid entries (caller filters these out).
+ */
+function normalizeDomainEntry(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  try {
+    // Parse through URL API for punycode normalization (same path as normalizeHost)
+    const u = new URL(`http://${trimmed}`);
+    return u.hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    // Fallback for entries that URL rejects: basic lowercase + strip
+    return trimmed.toLowerCase().replace(/\.$/, "");
+  }
+}
+
+/** Check if host matches any domain in the list (exact or subdomain). */
+function matchesDomainList(host: string, domains: string[]): string | null {
+  for (const domain of domains) {
+    if (host === domain || host.endsWith("." + domain)) return domain;
+  }
+  return null;
+}
+
 function extractText(value: unknown, max: number): string {
   const v = value as any;
   if (typeof v?.content === "string") return v.content.slice(0, max);
@@ -457,6 +493,10 @@ type RuntimeConfig = {
   scannerTimeoutMs: number;
   blockOnScannerFailure: boolean;
   outboundSecrets: RegExp[];
+  /** Tier A: normalized domains that are hard-blocked (exfil endpoints). */
+  blockedDomains: string[];
+  /** Tier B: normalized domains that bump risk score (dual-use infrastructure). */
+  riskyDomains: string[];
 };
 
 // ── Module-level mutable state ──
@@ -513,12 +553,22 @@ function buildRuntimeConfig(cfg: SecurityConfig): RuntimeConfig {
     .filter(Boolean) as RegExp[];
   const outboundSecrets = (cfg.outboundSecretPatterns ?? [
     "AKIA[0-9A-Z]{16}", "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----",
-    "xox[baprs]-[0-9A-Za-z-]{10,}", "ghp_[0-9A-Za-z]{30,}", "sk-[A-Za-z0-9]{20,}",
+    "xox[baprs]-[0-9A-Za-z-]{10,}", "ghp_[0-9A-Za-z]{30,}",
+    "gho_[0-9A-Za-z]{30,}", "glpat-[0-9A-Za-z_-]{20,}",
+    "sk-[A-Za-z0-9]{20,}", "sk_live_[0-9A-Za-z]{20,}",
   ])
     .map(p => {
       try { return new RegExp(p); } catch { return null; }
     })
     .filter(Boolean) as RegExp[];
+
+  const blockedDomains = (cfg.blockedDomains ?? [
+    "webhook.site", "requestbin.com", "hookbin.com", "interact.sh", "burpcollaborator.net",
+  ]).map(normalizeDomainEntry).filter(Boolean);
+
+  const riskyDomains = (cfg.riskyDomains ?? [
+    "ngrok.io", "pipedream.net",
+  ]).map(normalizeDomainEntry).filter(Boolean);
 
   return {
     riskTtlMs: cfg.riskTtlMs ?? 180_000,
@@ -532,6 +582,8 @@ function buildRuntimeConfig(cfg: SecurityConfig): RuntimeConfig {
     scannerTimeoutMs: cfg.scannerTimeoutMs ?? 900,
     blockOnScannerFailure: cfg.blockOnScannerFailure ?? false,
     outboundSecrets,
+    blockedDomains,
+    riskyDomains,
   };
 }
 
@@ -880,15 +932,32 @@ export default function register(api: OpenClawPluginApi) {
       }
     }
 
-    // Private network URL block
+    // URL security checks for scan tools
     if (rc.scanTools.has(tool)) {
       const url = firstStringParam(params, "url", "target", "href");
-      if (
-        url &&
-        /https?:\/\/(127\.0\.0\.1|localhost|10\.|172\.(1[6-9]|2\d|3[0-1])\.|192\.168\.)/i.test(url)
-      ) {
-        safeAuditLog(api, { event: "private_network_block", tool, url, session: ctx.sessionKey });
-        return { block: true, blockReason: "[security] private-network URL blocked" };
+      if (url) {
+        // Private network URL block
+        if (/https?:\/\/(127\.0\.0\.1|localhost|10\.|172\.(1[6-9]|2\d|3[0-1])\.|192\.168\.)/i.test(url)) {
+          safeAuditLog(api, { event: "private_network_block", tool, url, session: ctx.sessionKey });
+          return { block: true, blockReason: "[security] private-network URL blocked" };
+        }
+
+        // Tier A: blocked exfiltration domains (hard block)
+        const host = normalizeHost(url);
+        if (host) {
+          const blockedMatch = matchesDomainList(host, rc.blockedDomains);
+          if (blockedMatch) {
+            safeAuditLog(api, { event: "blocked_domain", tool, url, domain: blockedMatch, session: ctx.sessionKey });
+            return { block: true, blockReason: `[security] blocked exfiltration domain: ${blockedMatch}` };
+          }
+
+          // Tier B: risky domains (risk bump + audit, no hard block)
+          const riskyMatch = matchesDomainList(host, rc.riskyDomains);
+          if (riskyMatch && ctx.sessionKey) {
+            bumpRisk(ctx.sessionKey, [`risky-domain:${riskyMatch}`], rc.riskTtlMs, 15);
+            safeAuditLog(api, { event: "risky_domain_flagged", tool, url, domain: riskyMatch, session: ctx.sessionKey });
+          }
+        }
       }
     }
   });
@@ -1028,7 +1097,7 @@ export {
 export {
   normalizeToolName, firstStringParam, collectPaths,
   isProtectedPath, parseExecCommand, firstExecutable, execTrampolineReason,
-  hasShellMetacharacters, extractText, redactMessage,
+  hasShellMetacharacters, normalizeHost, normalizeDomainEntry, matchesDomainList, extractText, redactMessage,
 };
 export { buildRuntimeConfig, loadConfigFile, moduleState, cleanupAll };
 export type { RuntimeConfig };

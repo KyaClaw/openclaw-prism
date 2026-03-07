@@ -64,8 +64,32 @@
           "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----",
           "xox[baprs]-[0-9A-Za-z-]{10,}",
           "ghp_[0-9A-Za-z]{30,}",
-          "sk-[A-Za-z0-9]{20,}"
+          "gho_[0-9A-Za-z]{30,}",
+          "glpat-[0-9A-Za-z_-]{20,}",
+          "sk-[A-Za-z0-9]{20,}",
+          "sk_live_[0-9A-Za-z]{20,}"
         ]
+      },
+      "blockedDomains": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [
+          "webhook.site",
+          "requestbin.com",
+          "hookbin.com",
+          "interact.sh",
+          "burpcollaborator.net"
+        ],
+        "description": "Tier A: domains hard-blocked for scan tools (exfil endpoints with no legitimate agent use)"
+      },
+      "riskyDomains": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [
+          "ngrok.io",
+          "pipedream.net"
+        ],
+        "description": "Tier B: dual-use domains that bump risk score but don't hard-block"
       }
     }
   }

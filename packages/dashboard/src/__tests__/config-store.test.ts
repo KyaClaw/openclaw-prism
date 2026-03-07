@@ -71,6 +71,26 @@ describe("config-store", () => {
     expect(validation.errors.some((issue) => issue.field.startsWith("execBlockedPatterns"))).toBe(true);
   });
 
+  it("validates domain entries and rejects URLs and whitespace", () => {
+    const valid = validateSecurityConfig({
+      blockedDomains: ["webhook.site", "requestbin.com"],
+      riskyDomains: ["ngrok.io"],
+    });
+    expect(valid.valid).toBe(true);
+
+    const urlForm = validateSecurityConfig({
+      blockedDomains: ["https://webhook.site/abc"],
+    });
+    expect(urlForm.valid).toBe(false);
+    expect(urlForm.errors[0]!.message).toContain("domain, not a URL");
+
+    const withSpace = validateSecurityConfig({
+      riskyDomains: ["ngrok .io"],
+    });
+    expect(withSpace.valid).toBe(false);
+    expect(withSpace.errors[0]!.message).toContain("whitespace");
+  });
+
   it("throws config validation error on invalid update", () => {
     const policyPath = writePolicy({ execAllowedPrefixes: ["node"] });
     const current = readConfigStore(policyPath);

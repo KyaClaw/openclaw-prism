@@ -25,4 +25,8 @@ export type SecurityConfig = {
   outboundSecretPatterns?: string[];
   /** Exact canonical paths exempted from protectedPathPatterns (set by Dashboard allow). */
   protectedPathExceptions?: string[];
+  /** Tier A: domains hard-blocked for scan tools (exfil endpoints). */
+  blockedDomains?: string[];
+  /** Tier B: domains that bump risk score but don't hard-block (dual-use infrastructure). */
+  riskyDomains?: string[];
 };
