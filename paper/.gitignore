@@ -14,3 +14,5 @@ result-source-mapping.md
 generated/README.md
 generated/paper-main-draft-pandoc.tex
 generated/preliminary-main-results-*
+generated/arxiv-source/
+generated/*.zip
