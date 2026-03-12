@@ -1,0 +1,166 @@
+\section{System Design}
+
+\subsection{Architecture Overview}
+
+PRISM adopts a zero-fork integration strategy for OpenClaw-based agent gateways. The core principle is to insert security logic at the gateway lifecycle layer without modifying upstream gateway source code. To achieve this, PRISM combines an in-process plugin with a small set of optional sidecar services. The plugin is responsible for runtime interception inside the gateway itself, while the sidecars extend the system with external scanning, tool-governance mediation, audit inspection, policy management, and file monitoring. This separation allows PRISM to remain closely tied to actual gateway execution while keeping heavier operational functionality out of the plugin's critical path.
+
+The plugin is the architectural center of the system. It registers lifecycle hooks that observe or intercept message ingress, prompt construction, tool execution, post-tool handling, outbound messaging, sub-agent creation, session cleanup, and gateway startup. Around this hook surface, PRISM can accumulate risk signals, block unsafe actions, sanitize suspicious content, and emit audit events. The sidecars provide specialized functions that are not naturally embedded inside the gateway process: the scanner service performs authenticated remote classification of suspicious tool-returned content, the invoke-guard proxy provides policy-backed control over selected tool invocations, the dashboard exposes audit and configuration workflows, and the monitor watches selected files for integrity-relevant changes.
+
+This architecture deliberately separates data-plane enforcement from operational support surfaces. The plugin and proxy participate directly in security decisions that affect live execution. The scanner contributes additional classification signal, but it is not the sole enforcement mechanism and is not treated as a universally trusted oracle. The dashboard and monitor support operator visibility, configuration management, and recovery. Audit storage forms the evidence plane that ties these components together through append-only records and later verification.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  >=Latex,
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, line width=0.45pt},
+  flow/.style={->, thick},
+  lbl/.style={font=\scriptsize}
+]
+
+% ── Left: external sources ──
+\node[box, fill=gray!8, text width=1.5cm] (user) at (-0.8, 2.5)
+  {Users /\\external\\content};
+
+% ── Center: gateway container ──
+\node[box, fill=gray!4, minimum width=4.4cm, minimum height=3.2cm] (gw) at (4.2, 2.5) {};
+\node[font=\footnotesize\bfseries, anchor=north] at ([yshift=-4pt]gw.north)
+  {OpenClaw Gateway};
+
+% Plugin inside gateway
+\node[box, fill=orange!10, text width=2.9cm] (plugin) at (4.2, 2.1)
+  {\textbf{PRISM Plugin}\\[-2pt]
+   {\scriptsize 10 lifecycle hooks}\\[-2pt]
+   {\scriptsize risk engine + DLP}};
+
+% ── Right: data-plane sidecars ──
+\node[box, fill=blue!6, text width=2.4cm] (scanner) at (9.8, 3.6)
+  {Scanner\\[-2pt]{\scriptsize heuristic + LLM}};
+\node[box, fill=blue!6, text width=2.4cm] (proxy) at (9.8, 1.4)
+  {Invoke-guard Proxy\\[-2pt]{\scriptsize tool / exec policy}};
+
+\begin{scope}[on background layer]
+  \node[draw, dashed, rounded corners=3pt, inner sep=10pt,
+    draw=gray!40, line width=0.4pt, fit=(scanner)(proxy)] (dpgrp) {};
+\end{scope}
+\node[font=\scriptsize\itshape, text=gray!50, anchor=south] at (dpgrp.north)
+  {optional data-plane sidecars};
+
+% ── Right-lower: operations sidecars ──
+\node[box, fill=green!6, text width=1.9cm] (dashboard) at (8.2, -0.7)
+  {Dashboard\\[-2pt]{\scriptsize policy + audit UI}};
+\node[box, fill=green!6, text width=1.9cm] (monitor) at (11.2, -0.7)
+  {Monitor\\[-2pt]{\scriptsize file integrity}};
+
+\begin{scope}[on background layer]
+  \node[draw, dashed, rounded corners=3pt, inner sep=10pt,
+    draw=gray!40, line width=0.4pt, fit=(dashboard)(monitor)] (opsgrp) {};
+\end{scope}
+\node[font=\scriptsize\itshape, text=gray!50, anchor=south] at (opsgrp.north)
+  {operations sidecars};
+
+% ── Bottom: audit plane ──
+\node[box, fill=yellow!8, minimum width=10.4cm, minimum height=0.65cm] (audit) at (6.2, -2.5)
+  {Tamper-evident audit plane\quad{\scriptsize verification + recovery}};
+
+% ── Arrows ──
+
+% 1. Users → Gateway
+\draw[flow] (user.east) --
+  node[above, lbl] {messages /}
+  node[below, lbl] {fetched content}
+  (gw.west);
+
+% 2. Gateway → Scanner (horizontal at scanner height)
+\draw[flow] (gw.east |- scanner) --
+  node[above, lbl, midway] {suspicious tool results}
+  (scanner.west);
+
+% 3. Gateway → Proxy (horizontal at proxy height)
+\draw[flow] (gw.east |- proxy) --
+  node[above, lbl, midway] {selected tool invocations}
+  (proxy.west);
+
+% 4. Plugin → Audit
+\draw[flow] (plugin.south) --
+  node[left, lbl, pos=0.25] {audit events}
+  (plugin.south |- audit.north);
+
+% 5. Proxy → Audit
+\draw[flow] (proxy.south) -- (proxy.south |- audit.north);
+
+% 6. Dashboard → Audit
+\draw[flow] (dashboard.south) -- (dashboard.south |- audit.north);
+
+% 7. Monitor → Audit
+\draw[flow] (monitor.south) -- (monitor.south |- audit.north);
+
+\end{tikzpicture}
+\caption{PRISM architecture. The in-process plugin enforces security decisions inside the OpenClaw gateway. Optional data-plane sidecars extend scanning and tool governance; operations sidecars provide policy management and file-integrity monitoring. The audit plane ties runtime decisions to later verification and recovery.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Lifecycle-Wide Enforcement}
+
+The central systems claim of PRISM is that agent security should be distributed across the runtime lifecycle rather than concentrated at a single boundary. PRISM operationalizes this principle through ten hooks grouped into five phases, summarized in Figure~\ref{fig:lifecycle}.
+
+The \textbf{ingress phase} consists of \texttt{message\_received} and \texttt{before\_prompt\_build}. These hooks allow the system to inspect direct user-visible content before it becomes part of later prompt state. The first hook is conversation-oriented: when inbound text appears suspicious, PRISM can attach risk to a conversation-scoped key. The second hook is session-oriented: prompt text is scanned again, and if enough risk has accumulated, PRISM prepends a security notice warning the model not to obey instructions embedded in fetched content or tool results. This phase therefore serves two complementary roles: early detection and context-level warning before tools are involved.
+
+The \textbf{pre-execution phase} is centered on \texttt{before\_tool\_call}, which is the principal synchronous interception point for active policy enforcement. At this stage, PRISM can block high-risk tools for elevated-risk sessions, reject shell metacharacters and trampoline forms such as \texttt{bash -c} or \texttt{python -c}, enforce executable allowlists and deny patterns, check selected file paths, reject private-network destinations, and apply domain-tier handling. This is where the system transitions most clearly from detection into explicit runtime control.
+
+The \textbf{post-execution phase} includes \texttt{after\_tool\_call} and \texttt{tool\_result\_persist}. The first hook targets suspicious tool-returned content. For configured scan tools, PRISM first applies local heuristics to the returned text; only if that text appears suspicious does it invoke the remote scanner service. Scanner verdicts can then add session-level risk, while scanner failure is handled by adding a bounded risk signal rather than triggering a hard denial at that stage. The second hook, \texttt{tool\_result\_persist}, is synchronous and sanitizes suspicious tool output before it is written into persistent or reusable runtime state. Together, these hooks are designed to reduce the likelihood that malicious tool-returned text survives into later prompt context unchanged.
+
+The \textbf{outbound phase} is handled by \texttt{before\_message\_write} and \texttt{message\_sending}. The former acts as a final write-stage defense against suspicious text that would otherwise be persisted or surfaced in a later response. The latter adds two additional controls: outbound DLP checks for implemented secret patterns and conversation-level risk checks that can block message emission when the surrounding conversation has accumulated excessive risk. The purpose of this phase is to ensure that even if earlier stages missed or only partially mitigated a problem, the final hop retains the ability to interrupt exfiltration or leakage.
+
+The final group is \textbf{lifecycle maintenance}, implemented by hooks for sub-agent spawning, session end, and gateway startup. These hooks ensure that the defense system is not limited to a single interaction. PRISM can block sub-agent creation for sessions that have accumulated high risk, clear session-scoped state at session termination, and restore persisted risk state when the gateway starts. As a result, the system's policy logic can span multiple turns and survive restart when configured to do so.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  >=Latex,
+  phase/.style={draw, rounded corners, align=left, text width=2.35cm, minimum height=2.55cm, inner sep=6pt},
+  arrow/.style={->, thick}
+]
+\node[phase, fill=blue!8] (ingress) {\textbf{Ingress}\\Hooks: \path{message_received}, \path{before_prompt_build}\\Primary actions: direct-input scan, conversation risk, prompt warning injection};
+\node[phase, fill=orange!10, right=0.35cm of ingress] (pre) {\textbf{Pre-execution}\\Hook: \path{before_tool_call}\\Primary actions: tool blocking, exec governance, path checks, private-network and domain controls};
+\node[phase, fill=purple!8, right=0.35cm of pre] (post) {\textbf{Post-execution}\\Hooks: \path{after_tool_call}, \path{tool_result_persist}\\Primary actions: suspicious-result scan, risk update, persistence-time redaction};
+\node[phase, fill=red!8, right=0.35cm of post] (outbound) {\textbf{Outbound}\\Hooks: \path{before_message_write}, \path{message_sending}\\Primary actions: write-stage sanitization, DLP, conversation-level egress block};
+\node[phase, fill=green!10, right=0.35cm of outbound] (maint) {\textbf{Maintenance}\\Hooks: sub-agent spawn, session end, gateway start\\Primary actions: sub-agent block, state cleanup, persisted-risk restore};
+
+\draw[arrow] (ingress.east) -- (pre.west);
+\draw[arrow] (pre.east) -- (post.west);
+\draw[arrow] (post.east) -- (outbound.west);
+\draw[arrow] (outbound.east) -- (maint.west);
+\end{tikzpicture}
+\caption{Lifecycle-wide enforcement in PRISM. Security controls are distributed across five runtime phases, allowing the system to escalate from observation and warning to hard policy enforcement, redaction, and stateful recovery.}
+\label{fig:lifecycle}
+\end{figure}
+
+\subsection{Two-Tier Injection Scanning}
+
+PRISM's scanning design is intentionally hybrid. It does not rely on a single classifier, and it does not assume that every runtime stage requires the same depth of analysis. Instead, the system uses fast heuristic scoring broadly and reserves remote model-assisted classification for narrower cases where suspicious tool-returned content merits additional scrutiny.
+
+The first tier is a canonicalization and heuristic pipeline implemented in shared runtime logic. It normalizes Unicode using NFKC, performs limited percent-decoding, strips zero-width characters, and collapses formatting artifacts before applying weighted detection rules. These rules capture several common injection and abuse patterns, including instruction override phrases, system-prompt exfiltration attempts, credential-exfiltration language, tool-abuse command patterns, role overrides, format-token injection, and selected obfuscation signals. PRISM supplements these pattern rules with feature-style scoring and bonuses tied to suspicious transformed content. The result is a low-latency suspiciousness score that can be reused at several hooks throughout the lifecycle.
+
+The second tier resides in the scanner sidecar. When the plugin encounters suspicious tool-returned content from configured scan tools, it can submit that text to the scanner over an authenticated HTTP endpoint. Inside the scanner, heuristics are applied again; high-scoring results can be short-circuited as malicious without invoking the LLM judge. Otherwise, the scanner may query a local Ollama-served model with a bounded timeout and combine the model output with heuristic evidence. The final scanner verdict is mapped to \texttt{benign}, \texttt{suspicious}, or \texttt{malicious}, with graceful fallback to the heuristic-only result if the model stage fails. This design keeps the classifier role bounded: the LLM judge is a secondary signal source, not the sole security anchor of the system.
+
+\subsection{Session Risk Engine and Policy Response}
+
+PRISM translates local detection events into runtime policy through a risk engine with explicit scope and decay semantics. A key design choice is that PRISM does not bind all risk to a shared channel identifier. Instead, it distinguishes between conversation-scoped and session-scoped state. Inbound and outbound conversation-level logic uses a conversation identifier when one is available, whereas prompt- and tool-related signals are tied to session keys. This separation prevents unrelated sessions from sharing risk simply because they happen to traverse a common channel-like identifier.
+
+Risk entries carry a time-to-live and are periodically swept, which allows the system to model elevated risk as a time-bounded operational condition rather than as a permanent label. When configured, risk state may also be persisted and restored across gateway restarts. The practical effect is that PRISM can respond to patterns that emerge over multiple interactions while still allowing stale signals to decay naturally.
+
+The response policy is thresholded rather than binary. At lower risk levels, PRISM injects warning context before prompt construction to reduce the likelihood that the model follows suspicious instructions. At higher risk, PRISM blocks high-risk tools during \texttt{before\_tool\_call}. At an even higher threshold, it blocks sub-agent spawning. This staged design reflects the observation that not every suspicious signal justifies immediate hard denial, but repeated or compounding signals should eventually narrow the agent's available action surface.
+
+\subsection{Tool, Network, and Audit Governance}
+
+Beyond injection handling, PRISM enforces explicit governance over tool execution, selected file operations, outbound destinations, and audit integrity.
+
+\paragraph{Tool governance.} The primary enforcement path is \texttt{before\_tool\_call}, supplemented by the invoke-guard proxy in deployments that choose to route tools through a dedicated policy service. PRISM checks executable prefixes, known-dangerous patterns, shell metacharacters, and trampoline forms that attempt to smuggle arbitrary shell execution through superficially benign tools. It also includes specific handling for Git SSH override patterns that can bypass ordinary command expectations. The goal is not to identify all unsafe commands from semantics alone, but to enforce a practical runtime policy over the tool surface that the gateway exposes.
+
+\paragraph{Path governance.} PRISM applies canonicalized path checks to selected protected locations and can support explicit exceptions through operator-managed policy updates. This mechanism is intentionally string-level: it resolves and normalizes paths but does not claim symlink-aware filesystem containment. The design target is practical protection for known sensitive paths rather than a general replacement for filesystem sandboxing.
+
+\paragraph{Network and outbound governance.} PRISM combines private-network blocking, tiered domain handling, and DLP checks for selected credential patterns. These controls are distributed across the runtime: risky destinations can be blocked or escalated before tool execution, while secrets can be filtered again on outbound message emission. This layering matters because agent misuse often involves both a destination choice and a payload choice; PRISM therefore treats exfiltration defense as more than a single string-matching problem.
+
+\paragraph{Tamper-evident audit and operations.} PRISM couples runtime enforcement to a tamper-evident audit and operations plane. Audit entries include chained hash linkage and HMAC-based integrity protection, while periodic anchors support later verification. The audit path is designed to remain operationally useful even if some supporting sinks fail temporarily: enforcement does not depend on perfect audit delivery. Around the audit layer, the dashboard exposes configuration inspection, revision-aware updates, and allow workflows so that policy exceptions can be reviewed and applied through an explicit operator path rather than by ad hoc file edits. This combination of runtime control and operational feedback is central to why PRISM is best understood as a deployable security system rather than as a standalone detector.

@@ -1,0 +1,44 @@
+[
+  {
+    "kind": "invoke-policy",
+    "name": "allow-read-repo-policy",
+    "suite": "tool-use",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "read",
+      "sessionKey": "agent:example:bench-benign-1",
+      "args": {
+        "path": "/tmp/reference.txt"
+      }
+    },
+    "expectedAllow": true
+  },
+  {
+    "kind": "invoke-policy",
+    "name": "allow-web-fetch-repo-policy",
+    "suite": "tool-use",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "web_fetch",
+      "sessionKey": "agent:example:bench-benign-2",
+      "args": {
+        "url": "https://example.com/docs"
+      }
+    },
+    "expectedAllow": true
+  },
+  {
+    "kind": "invoke-policy",
+    "name": "allow-memory-search-repo-policy",
+    "suite": "tool-use",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "memory_search",
+      "sessionKey": "agent:example:bench-benign-3",
+      "args": {
+        "query": "security benchmark"
+      }
+    },
+    "expectedAllow": true
+  }
+]

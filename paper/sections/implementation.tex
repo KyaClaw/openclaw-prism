@@ -1,0 +1,51 @@
+\section{Implementation}
+
+PRISM is implemented as a TypeScript monorepo targeting Node.js $\geq$22 and managed as a pnpm workspace. The implementation mirrors the architectural separation described in Section~3: a single in-process plugin performs lifecycle interception inside the OpenClaw gateway, while four optional sidecar services provide injection scanning, tool-invocation policy enforcement, an operations dashboard, and file-integrity monitoring. Shared utilities---including the weighted heuristics, canonicalization pipeline, audit-chain helpers, path normalization, and common type definitions---are factored into a dedicated library package, ensuring that the same security logic is used consistently across all runtime components and the evaluation harness.
+
+The repository contains seven packages under \texttt{packages/}, each built with tsup into ESM artifacts. Table~\ref{tab:components} summarizes the major components. Line counts are approximate production TypeScript source lines under \texttt{packages/*/src}, excluding test files.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l r l X}
+\toprule
+Package & Approx.\ LOC & Default interface & Main responsibility \\
+\midrule
+\texttt{dashboard} & $\sim$1,900 & HTTP \texttt{127.0.0.1:18768} & Security dashboard, audit browsing, configuration editing, allow preview/apply, component health probes \\
+\texttt{plugin} & $\sim$980 & In-process OpenClaw plugin & Ten lifecycle hooks, risk accumulation, outbound controls, internal audit delegation \\
+\texttt{proxy} & $\sim$610 & HTTP \texttt{127.0.0.1:18767} & Tool-invocation RBAC, session-ownership checks, dangerous-exec blocking, upstream forwarding \\
+\texttt{shared} & $\sim$470 & Library (no network) & Heuristics, audit-chain primitives, path helpers, shared types \\
+\texttt{cli} & $\sim$420 & Terminal entrypoint & Service start/status, verification, policy simulation, audit tail/verify \\
+\texttt{scanner} & $\sim$130 & HTTP \texttt{127.0.0.1:18766} & Heuristic-first and Ollama-assisted injection scanning \\
+\texttt{monitor} & $\sim$100 & File watcher (no network) & Integrity monitoring for selected local control files \\
+\bottomrule
+\end{tabularx}
+\caption{Implementation components.}
+\label{tab:components}
+\end{table}
+
+\subsection{Codebase Structure and Packaging}
+
+The workspace is split along operational boundaries rather than purely logical module groupings. The plugin package is the only component that runs inside the gateway process; the scanner, proxy, dashboard, and monitor are standalone executables that can be supervised, upgraded, and restarted independently. This division makes deployment incremental: operators can run the plugin alone for lightweight protection, then attach sidecar services progressively as their assurance requirements grow.
+
+The plugin exposes a declarative configuration schema (\texttt{openclaw.plugin.json}) that allows operators to tune risk TTL, protected paths, exec allow/block lists, scanner timeouts, outbound secret patterns, and domain tiers without modifying source code. PRISM is therefore not a fixed benchmark binary but a configurable runtime layer intended for integration into production gateway deployments.
+
+Common security logic is centralized in the shared package. The weighted heuristics, canonicalization pipeline, audit-chain verification routines, and path normalization helpers are imported by the plugin, scanner, CLI, and evaluation harness alike. This centralization eliminates duplication across components and ensures that metric-oriented experiments exercise the identical code paths that would run in a live deployment.
+
+\subsection{Deployment Model}
+
+The reference deployment flow is driven by an installer that builds the workspace, provisions runtime secrets and policy files, and registers optional sidecar services with platform service managers. This deployment model is designed for long-running agent gateways rather than transient shell sessions. On Linux, the sidecars can be supervised through systemd; on macOS, the repository supports launchd-based supervision for the major auxiliary services together with a manual-start path where needed.
+
+All network-exposed components default to loopback bindings. The scanner, proxy, and dashboard therefore operate as local sidecars rather than as internet-facing services. The plugin can additionally expose an optional internal audit endpoint for single-writer delegation from the dashboard; this interface is an internal loopback path, not a main plugin service port.
+
+Importantly, the implementation does not require every component in every deployment. The plugin can operate without the dashboard or monitor, and individual sidecars are gated by environment variables (\texttt{PRISM\_SCANNER\_START}, \texttt{PRISM\_PROXY\_START}, \texttt{PRISM\_MONITOR\_START}, \texttt{PRISM\_DASHBOARD\_START}). PRISM is a modular runtime layer, not an all-or-nothing appliance.
+
+\subsection{Operational Interfaces}
+
+PRISM provides both machine-facing and operator-facing interfaces. Machine-facing interfaces are simple authenticated HTTP surfaces for scanning, proxy-mediated tool control, dashboard management, and component health inspection. On the operator-facing side, the CLI supports service control, status inspection, post-upgrade verification, offline policy simulation, and audit inspection and verification. These policy-simulation and audit-verification workflows are particularly noteworthy because they transform otherwise implicit runtime behavior into explicit, reproducible operator procedures, reinforcing that PRISM is designed for day-to-day operational use rather than one-time benchmark execution.
+
+\subsection{Testing and Engineering Maturity}
+
+The repository builds from the root with \texttt{pnpm -r build} and uses Vitest for unit and component testing. A static count over repository-owned test files yields 13 test files containing 142 test cases. These tests cover the heuristic scoring engine, audit-chain verification, plugin hook registration and lifecycle behavior, proxy policy logic, scanner classification paths, dashboard allow-action workflows, and monitor reconciliation. The test layout mirrors the component boundaries of the system: dedicated test files exist for audit-chain integrity, dashboard allow-actions, policy explanation paths, and hook-level plugin behavior. This coverage provides evidence that PRISM is implemented as a system with nontrivial operational logic rather than as a thin research prototype.
+
+We emphasize that this test suite represents broad engineering coverage over security-critical paths, not a formal proof of security. The presence of build infrastructure, service-supervision artifacts, CLI verification commands, and component-level tests demonstrates implementation maturity, but it does not imply complete cross-platform portability, formal assurance, or production-scale validation. Those boundaries are discussed in Section~7.

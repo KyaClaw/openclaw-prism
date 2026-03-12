@@ -1,0 +1,225 @@
+\section{Evaluation}
+
+We evaluate PRISM as a deployable runtime defense system rather than as a standalone prompt-injection classifier. This distinction is important: because PRISM distributes its security mechanisms across ten lifecycle hooks, four sidecar services, and a session-level risk engine, an evaluation limited to a single detection accuracy number would fail to capture the system's behavior. Accordingly, our evaluation is organized around five research questions:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{(RQ1) Security effectiveness.} How effectively does PRISM block representative attacks across multiple agent runtime surfaces, including prompt injection, tool abuse, credential exfiltration, and file tampering?
+  \item \textbf{(RQ2) False positives.} How often does PRISM incorrectly flag benign agent workflows?
+  \item \textbf{(RQ3) Layer contribution.} Which protection layers contribute meaningfully to overall security outcomes, and does removing individual layers degrade defense in measurable ways?
+  \item \textbf{(RQ4) Runtime overhead.} What latency, CPU, and memory costs does PRISM introduce relative to an unprotected baseline?
+  \item \textbf{(RQ5) Operational recoverability.} Does the system support practical operational recovery through audit verification, policy hot-reload, and allow workflows?
+\end{itemize}
+
+At the current stage, the benchmark infrastructure supports preliminary benchmark experiments for text classification, proxy-policy enforcement, and hook-level lifecycle behavior, while larger-scale end-to-end gateway experiments and deployment-level systems-overhead instrumentation remain future work. We therefore distinguish between (i) the target evaluation methodology that will drive the final paper results and (ii) a smaller benchmark layer used to validate the benchmark harness itself.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\begin{tabularx}{\textwidth}{l X X X}
+\toprule
+RQ & Core question & Primary artifact / configuration & Principal outputs \\
+\midrule
+RQ1 & Security effectiveness across attack surfaces & Baseline ladder from no PRISM to full PRISM & Attack block rate, precision, recall, F1 \\
+RQ2 & False positives on benign workflows & Benign suites and keyword-stress controls & False positive rate, error analysis by suite \\
+RQ3 & Layer contribution and ablation impact & Single-layer removals and adjacent baseline comparisons & Delta in block rate and false positives per layer \\
+RQ4 & Runtime overhead & Instrumented protected vs.\ unprotected runs & p50/p95/p99 latency, CPU overhead, memory overhead \\
+RQ5 & Operational recoverability & Audit verification, policy reload, and allow-action workflows & Audit verification success, reload latency, recovery trace quality \\
+\bottomrule
+\end{tabularx}
+\caption{Mapping from research questions to the artifacts and outputs required to answer them. This table fixes the evaluation contract in advance so that later prose remains aligned with the actual experiment design.}
+\label{tab:rq-mapping}
+\end{table}
+
+\subsection{Experimental Setup}
+
+PRISM is implemented as a TypeScript monorepo targeting Node.js and is deployed as a combination of an in-process OpenClaw plugin and four optional sidecar services: the scanner, proxy, dashboard, and file monitor. Our evaluation framework mirrors this architecture and measures security behavior at the layer where each defense mechanism is implemented, rather than treating the system as a monolithic black box.
+
+The current benchmark harness is implemented in \texttt{run-benchmark.ts}. It recursively loads JSON-formatted test cases from two directories---\texttt{attack-corpus/} and \texttt{benign-corpus/}---executes each case against one or more evaluation engines, and emits a structured JSON report. The current harness supports eight engines:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{No-PRISM engine}, which models an unprotected gateway by forwarding requests without scanner, hook, or policy intervention.
+  \item \textbf{Heuristics-only engine}, which applies the shared heuristic rules to an explicit per-case textual probe while leaving all other structure untreated.
+  \item \textbf{Heuristic engine}, which exercises the shared text-canonicalization pipeline and weighted heuristic scoring rules.
+  \item \textbf{Scanner engine}, which exercises the scanner's classification path, including the heuristic front-end and, when configured, the LLM cascade.
+  \item \textbf{Proxy-policy engine}, which exercises token-based authentication, session-ownership checks, tool allow/deny rules, and the built-in dangerous-exec guards.
+  \item \textbf{Plugin-only engine}, which executes step-sequenced lifecycle scenarios against the real plugin hooks with no functioning remote scanner.
+  \item \textbf{Plugin-scanner engine}, which executes the same lifecycle scenarios while exposing the plugin's \texttt{after\_tool\_call} hook to the scanner service.
+  \item \textbf{Full-PRISM engine}, which combines the plugin-scanner lifecycle path with proxy-policy enforcement on policy-layer cases.
+\end{itemize}
+
+The current preliminary corpus contains 110 hand-authored cases distributed as follows: 3 direct-injection cases, 3 indirect-injection cases, 2 exfiltration cases, 18 tool-abuse policy cases, 47 plugin-flow lifecycle cases, 15 scanner-focused contextual cases, 3 benign chat cases, 2 benign web-content cases, 15 benign policy-allowed tool-use cases, and 2 challenging benign controls designed to stress false-positive behavior. Table~\ref{tab:seed-corpus} summarizes these suites and the primary mechanism each suite is intended to exercise. This corpus remains modest relative to the full evaluation target; its immediate purpose is to validate the report structure, exercise the metrics pipeline, and isolate scanner-path and lifecycle-benchmark behavior before scaling to a larger end-to-end corpus.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l c c X}
+\toprule
+Suite family & Cases & Type & Primary mechanism exercised \\
+\midrule
+Direct injection & 3 & Attack & Heuristic detection of override / disclosure language \\
+Indirect injection & 3 & Attack & Canonicalization, suspicious-result scanning, persistence redaction \\
+Exfiltration & 2 & Attack & Secret-pattern detection and outbound safeguards \\
+Tool abuse & 18 & Attack & Proxy policy checks and dangerous-exec blocking \\
+Plugin-flow lifecycle cases & 47 & Mixed & Step-sequenced hook-level evaluation of plugin-only, plugin-scanner, and full-PRISM configurations \\
+Scanner-focused contextual cases & 15 & Mixed & Controlled assisted-path validation on contextual attacks and borderline benign quotations \\
+Benign chat & 3 & Benign & Low-friction pass-through on ordinary user requests \\
+Benign web content & 2 & Benign & Resistance to false positives on retrieved content \\
+Benign tool use & 15 & Benign & Policy-allowed proxy forwarding \\
+Keyword false-positive controls & 2 & Benign & Oversensitivity stress test for surface-form heuristics \\
+\bottomrule
+\end{tabularx}
+\caption{Current preliminary benchmark corpus. The table is intentionally small and should be read as a pilot benchmark snapshot rather than as the final evaluation scale.}
+\label{tab:seed-corpus}
+\end{table}
+
+For artifact reproduction, the default workflow requires two commands:
+
+\begin{verbatim}
+corepack pnpm -r build
+corepack pnpm --filter @kyaclaw/cli exec tsx ../../evaluation/run-benchmark.ts
+\end{verbatim}
+
+The resulting report is stored in \texttt{evaluation/results/benchmark-report.json}, with a human-readable summary in \texttt{evaluation/results/seed-run-summary.md}.
+
+To keep scanner-path evidence reproducible, the harness also records run-level scanner metadata, including whether a run was executed in default, controlled mock-assisted, or explicitly live-model mode, together with the effective model label and timeout budget. This metadata matters because a live-model experiment should not silently degrade into heuristic fallback while still being described as an assisted-path run.
+
+\subsection{Attack Suites and Benign Controls}
+
+Our evaluation is organized by attack surface rather than by a single prompt-injection label. This design choice reflects the fact that PRISM is a runtime defense architecture whose mechanisms are distributed across prompt processing, tool invocation, outbound messaging, and policy enforcement---collapsing all attacks into a single category would obscure which layer is responsible for which outcome.
+
+The current harness instantiates the following suite families:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Direct injection}: attempts to override instructions, take over agent roles, force system-prompt disclosure, or exploit format-token boundaries.
+  \item \textbf{Indirect injection}: malicious text plausibly delivered through fetched web content, including percent-encoded directives and zero-width-character obfuscation.
+  \item \textbf{Exfiltration}: attempts to upload, disclose, or transmit tokens, secrets, or API keys, including command-oriented patterns such as piping to a remote shell.
+  \item \textbf{Tool abuse}: unauthorized callers, foreign-session access attempts, invocations of disallowed tools, default-deny tool requests, and dangerous shell-trampoline commands.
+  \item \textbf{Benign chat and web}: natural-language requests and web-retrieval results that should pass through without triggering any defense.
+  \item \textbf{Benign tool use}: proxy-policy requests that should be allowed under the configured policy.
+  \item \textbf{Keyword false-positive controls}: benign text deliberately containing security-related vocabulary intended to measure oversensitivity in surface-form heuristics.
+\end{itemize}
+
+In the full evaluation, these suites will be expanded with additional file-tampering cases, a larger indirect-injection corpus, and end-to-end hook-level scenarios. The guiding design principle is to preserve suite identity so that blocking rates and false positives can be attributed to specific defense mechanisms rather than collapsed into a single aggregate number.
+
+\subsection{Baselines and Ablations}
+
+Because PRISM is explicitly a layered system, a single detector-style baseline is insufficient to demonstrate why lifecycle-wide interception, proxy enforcement, or session-level risk accumulation matter. The evaluation therefore compares multiple deployment configurations arranged as an incremental baseline ladder:
+
+\begin{enumerate}[leftmargin=1.5em]
+  \item \textbf{No PRISM} --- the unprotected OpenClaw gateway.
+  \item \textbf{Heuristics only} --- local text heuristics with no sidecar services.
+  \item \textbf{Plugin only} --- all ten lifecycle hooks active, but no external scanner, proxy, or monitor.
+  \item \textbf{Plugin + scanner} --- lifecycle hooks plus the scanner cascade.
+  \item \textbf{Full PRISM} --- all components active, including proxy, monitor, dashboard, and DLP.
+\end{enumerate}
+
+This ladder allows each configuration to be compared against both the unprotected baseline and the immediately preceding level, isolating the incremental contribution of each layer.
+
+For ablation experiments, the most important single-component removals are:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Removing the remote scan cascade (heuristic-only classification).
+  \item Removing session risk accumulation (each message judged independently).
+  \item Removing the proxy and exec-governance layer (tool calls forwarded without policy checks).
+  \item Removing outbound DLP (credential patterns not scanned in outbound messages).
+  \item Removing the file monitor (control-file changes not detected).
+\end{itemize}
+
+The current preliminary harness directly supports only a subset of this design space. Specifically, it exercises heuristics-only behavior through the heuristic engine, scanner-path behavior through the scanner engine, policy-layer behavior through the proxy-policy engine, and hook-level lifecycle behavior through the plugin-only, plugin-scanner, and full-PRISM engines. These partial engines are useful for early validation but are not substitutes for the full end-to-end baseline comparison.
+
+\subsection{Metrics}
+
+We report two complementary families of metrics: security metrics and systems metrics.
+
+\paragraph{Security metrics.} For suites dominated by text classification and policy enforcement, the harness computes accuracy, precision, recall, F1, attack block rate, and false positive rate. These metrics are already emitted in the JSON report and are sufficient for the preliminary runs presented in Section~5.5.
+
+\paragraph{Systems metrics.} Because PRISM is a runtime defense layer rather than an offline classifier, security efficacy alone is an incomplete picture. The full evaluation must additionally report per-hook latency (p50, p95, p99), end-to-end latency delta between protected and unprotected configurations, CPU and memory overhead disaggregated by component, audit-chain verification success rate and tamper-detection rate, configuration-reload latency, and allow-action completion latency.
+
+The current harness now emits a preliminary profiling block for each engine. It records p50/p95/p99 case timing, CPU time per executed case, and peak RSS delta. We also supplement the report with narrow component-level operational timings for audit verification and proxy policy reload. These measurements are useful for current benchmark characterization, but they are still weaker than a deployment-level overhead study across real gateway and sidecar processes.
+
+\subsection{Preliminary Benchmark Results}
+
+The results presented in this subsection should be read as preliminary benchmark evidence rather than as final experimental findings. At the current stage we maintain two benchmark families. The first is a text-and-policy corpus with default and controlled mock-assisted scanner runs. The second is a step-sequenced \texttt{plugin-flow} corpus intended to ground the middle rows of the baseline ladder before a full OpenClaw gateway harness exists.
+
+In the \textbf{default benchmark run}, the \textbf{no-PRISM engine} executes all 110 preliminary cases and correctly classifies only the 50 benign ones, yielding accuracy 0.455 and attack recall 0.000. This deliberately weak lower bound is useful because it anchors the baseline ladder to a concrete ``forward-everything'' reference rather than leaving the unprotected row purely conceptual. On the protected text path, the \textbf{heuristic engine} and the \textbf{scanner engine} each execute 30 \texttt{scan-text} cases and both achieve 15 out of 30 correct classifications, yielding accuracy 0.500, precision 0.526, recall 0.625, and F1 0.571. The \textbf{proxy-policy engine} now executes 33 \texttt{invoke-policy} cases and classifies all 33 correctly. Scanner-path telemetry shows 8 \texttt{heuristic-shortcircuit} cases and 22 \texttt{heuristic-fallback} cases, with zero \texttt{ollama-assisted} cases. This default run is therefore useful primarily as a transparency check: absent an available model endpoint, the scanner engine degenerates to heuristic behavior rather than implicitly claiming additional coverage.
+
+In the \textbf{controlled mock-assisted run}, the harness enables \texttt{--scanner-ollama-mock}, which serves case-embedded model verdicts only for explicitly annotated \texttt{scanner-focused} cases. Under this configuration, the \textbf{no-PRISM engine} remains unchanged at 50 out of 110 because it never consults the scanner, the heuristic engine remains at 15 out of 30 correct classifications, but the scanner engine improves to 26 out of 30, yielding accuracy 0.867, precision 0.800, recall 1.000, and F1 0.889. The proxy-policy engine remains at 33 out of 33 because it does not depend on the scanner path. Scanner-path telemetry records 13 \texttt{ollama-assisted} cases, 8 \texttt{heuristic-shortcircuit} cases, and 9 \texttt{heuristic-fallback} cases. The main value of this run is not to claim real model performance, but to demonstrate that the benchmark can isolate and measure scanner-path differences when those paths are explicitly exercised.
+
+The structure of the remaining errors is informative. In the mock-assisted run, the scanner resolves all of the newly added contextual attack cases and all of the new quoted benign controls in the \texttt{scanner-focused} suite, but it still misclassifies four high-score benign controls: the two \texttt{keyword-false-positive-controls} cases and the two earlier \texttt{scanner-focused} training/reporting cases whose heuristic scores exceed the short-circuit threshold. This residual error pattern exposes an important limitation of the current cascade design: once the local heuristic score crosses the high-risk short-circuit boundary, the model path is never consulted.
+
+These runs should therefore be interpreted conservatively. The default run validates transparent fallback behavior, and the controlled mock-assisted run validates path instrumentation and table generation under controlled conditions. Neither run should be presented as a substitute for a live-model evaluation under fixed model, timeout, and hardware settings.
+
+The expanded \textbf{plugin-flow} benchmark family now provides 47 lifecycle cases inside the unified baseline-ladder slice. On this suite alone, \textbf{plugin-only} reaches 34 out of 47 correct outcomes in the default, mock-assisted, and live runs. \textbf{Plugin-scanner} improves to 38 out of 47 in the default run, 41 out of 47 in the controlled mock-assisted run, and 40 out of 47 in the live local-model run. \textbf{Full-PRISM} matches the default and mock lifecycle totals at 38/47 and 41/47 and, in the current live benchmark, matches \textbf{plugin-scanner} at 40/47 before adding policy-layer coverage on the \texttt{tool-abuse} and \texttt{tool-use} suites. The most informative differential cases remain contextual tool-result attacks that only become blockable after scanner-assisted risk escalation, together with quoted benign training examples that plugin-only still over-blocks because scanner failure contributes a fallback risk bump.
+
+To reduce the remaining comparability gap between rows in the baseline ladder, we also maintain a \textbf{unified baseline-ladder slice} consisting of the \texttt{plugin-flow}, \texttt{tool-abuse}, and \texttt{tool-use} suites. This slice now contains 80 cases and is the strongest current same-slice benchmark in which all five target configurations---\textbf{No PRISM}, \textbf{Heuristics only}, \textbf{Plugin only}, \textbf{Plugin + scanner}, and \textbf{Full PRISM}---are computed over the same case set. In the \textbf{default unified run}, these five rows achieve 36/80, 46/80, 49/80, 53/80, and 71/80 correct outcomes, respectively. In the \textbf{controlled mock-assisted unified run}, the first three rows remain unchanged while \textbf{Plugin + scanner} improves to 56/80 and \textbf{Full PRISM} to 74/80. We then repeated the same unified slice in a \textbf{live local-model run} using a local Ollama endpoint with \texttt{qwen3:8b}, a 20\,s model timeout, fixed-temperature local decoding, and a plugin-side scanner timeout widened to 21\,s to avoid mistaking local-model latency for scanner failure. Under this live setting, the harness records more than a dozen genuinely model-assisted cases; \textbf{Plugin + scanner} reaches 55/80 and \textbf{Full PRISM} reaches 73/80, while \textbf{No PRISM}, \textbf{Heuristics only}, and \textbf{Plugin only} remain at 36/80, 46/80, and 49/80. The corresponding live attack block rates are 0.000, 0.409, 0.455, 0.545, and 0.955, while the false-positive rates are 0.000, 0.222, 0.194, 0.139, and 0.139. This live benchmark remains preliminary and should not be confused with the final end-to-end table, but it is a materially stronger paper-facing reference point than the earlier mock-assisted slice because it confirms that the scanner lift is observable under a real local model rather than only under benchmark-injected verdicts.
+
+The same live benchmark now also carries a \textbf{preliminary harness-level overhead profile}. On the current 80-case live slice, the unprotected and local-only configurations remain sub-millisecond at p95 (0.007\,ms for \textbf{No PRISM}, 0.046\,ms for \textbf{Heuristics only}, and 0.583\,ms for \textbf{Plugin only}), whereas the scanner-backed rows rise sharply to 12.5\,s for \textbf{Plugin + scanner} and 15.8\,s for \textbf{Full PRISM}. This gap is unsurprising: on the preliminary slice, the dominant cost is local-model scanner latency on the subset of cases that exercise the remote classification path, not local heuristic processing. Peak RSS deltas in this single-process harness stay below 1.4\,MiB across the five rows, indicating that the visible cost at this stage is primarily latency rather than memory growth. We also measured two component-level operational timings: on a 200-entry synthetic audit log, p95 audit-chain verification is 4.683\,ms for chain-only verification and 8.846\,ms when anchor verification is included, while proxy \texttt{reloadPolicy()} reaches p95 0.574\,ms. These figures are useful for preliminary benchmark characterization and for grounding the discussion of recoverability, but they should not be interpreted as substitutes for a deployment-level end-to-end overhead study.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\begin{tabularx}{\textwidth}{l c c c c c}
+\toprule
+Configuration & Attack block rate & False positive rate & Precision & Recall & F1 \\
+\midrule
+No PRISM & 0.000 & 0.000 & n/a & 0.000 & n/a \\
+Heuristics only & 0.409 & 0.222 & 0.692 & 0.409 & 0.514 \\
+Plugin only & 0.455 & 0.194 & 0.741 & 0.455 & 0.563 \\
+Plugin + scanner & 0.545 & 0.139 & 0.828 & 0.545 & 0.658 \\
+Full PRISM & 0.955 & 0.139 & 0.894 & 0.955 & 0.923 \\
+\bottomrule
+\end{tabularx}
+\caption{Preliminary unified baseline-ladder results on the current 80-case same-slice benchmark consisting of \texttt{plugin-flow}, \texttt{tool-abuse}, and \texttt{tool-use} suites under a live local-model scanner setting (\texttt{qwen3:8b} via Ollama). This is the strongest current five-row comparison, but it remains a preliminary benchmark rather than the final end-to-end paper result.}
+\label{tab:prelim-baseline-ladder}
+\end{table}
+
+\begin{table}[t]
+\centering
+\footnotesize
+\begin{tabularx}{\textwidth}{l c c c c c}
+\toprule
+Configuration & p50 ms & p95 ms & p99 ms & CPU ms / case & Peak RSS $\Delta$ MiB \\
+\midrule
+No PRISM & 0.002 & 0.007 & 0.209 & 0.000 & 0.027 \\
+Heuristics only & 0.005 & 0.046 & 2.297 & 0.000 & 0.219 \\
+Plugin only & 0.083 & 0.583 & 3.619 & 0.200 & 1.348 \\
+Plugin + scanner & 0.178 & 12498.437 & 19874.211 & 10.162 & 0.066 \\
+Full PRISM & 1.799 & 15774.620 & 20045.816 & 21.087 & 0.980 \\
+\bottomrule
+\end{tabularx}
+\caption{Preliminary harness-level overhead profile on the live 80-case baseline-ladder artifact. These numbers reflect benchmark-path timing and local-process resource cost, not deployment-level service latency.}
+\label{tab:prelim-overhead}
+\end{table}
+
+\begin{table}[t]
+\centering
+\footnotesize
+\begin{tabularx}{\textwidth}{l c c c c c c}
+\toprule
+Operation & Avg ms & p50 ms & p95 ms & p99 ms & Min ms & Max ms \\
+\midrule
+Verify chain only & 2.932 & 2.483 & 4.683 & 4.683 & 1.804 & 4.683 \\
+Verify chain + anchors & 5.308 & 4.882 & 8.846 & 8.846 & 3.856 & 8.846 \\
+Proxy reloadPolicy() & 0.345 & 0.336 & 0.574 & 0.574 & 0.241 & 0.574 \\
+\bottomrule
+\end{tabularx}
+\caption{Preliminary component-level operational timings used to ground PRISM's recoverability claims. The audit timings are measured on a synthetic 200-entry log with anchors every 10 entries; the reload timing measures proxy policy reload on a temporary local policy file.}
+\label{tab:prelim-operational}
+\end{table}
+
+\subsection{Case Studies}
+
+In addition to aggregate metrics, the evaluation will include short case studies that illustrate how specific PRISM mechanisms respond to representative attack vectors. These studies serve a different purpose than the quantitative tables: they demonstrate the system's behavior at the level of individual interactions rather than statistical summaries.
+
+The target case studies are:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Case 1}: indirect injection embedded in fetched web content; detected by post-tool scanning and redacted at persistence/write stages; residual limitation depends on heuristic coverage of novel injection patterns.
+  \item \textbf{Case 2}: shell-command abuse via trampoline (\texttt{curl | sh}, \texttt{bash -c}); blocked before execution by command-parsing rules; residual limitation is that novel trampoline patterns may require rule updates.
+  \item \textbf{Case 3}: outbound credential leakage in an agent response; blocked by DLP pattern matching at the message-sending stage; residual limitation is coverage of only known credential prefixes.
+  \item \textbf{Case 4}: gradual escalation through repeated low-grade signals; risk score accumulates across turns and high-risk tools are blocked at threshold; residual limitation depends on TTL window and attacker pacing.
+  \item \textbf{Case 5}: cross-session contamination via a shared channel; no contamination because risk state is split between conversation-scoped and session-scoped keys rather than shared channel IDs; residual limitation depends on correct session-key propagation by the gateway.
+  \item \textbf{Case 6}: audit log tampered after the fact; chain break detected by HMAC and hash verification; residual limitation is that detection is post-hoc rather than preventive.
+\end{itemize}
+
+This format ensures that each case study includes not only the defense outcome but also the residual limitation, preventing the section from drifting into uncritical success narratives.

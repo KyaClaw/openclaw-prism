@@ -1,0 +1,54 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{xurl}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={OpenClaw PRISM: A Zero-Fork, Defense-in-Depth Runtime Security Layer for Tool-Augmented LLM Agents}
+}
+
+\title{OpenClaw PRISM: A Zero-Fork, Defense-in-Depth Runtime Security Layer for Tool-Augmented LLM Agents}
+\author{Frank Li\\UNSW Sydney\\\texttt{research@n1a.net}}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Tool-augmented LLM agents introduce security risks that extend beyond user-input filtering, including indirect prompt injection through fetched content, unsafe tool execution, credential leakage, and tampering with local control files. We present OpenClaw PRISM, a zero-fork runtime security layer for OpenClaw-based agent gateways. PRISM combines an in-process plugin with optional sidecar services and distributes enforcement across ten lifecycle hooks spanning message ingress, prompt construction, tool execution, tool-result persistence, outbound messaging, sub-agent spawning, and gateway startup. Rather than introducing a novel detection model, PRISM integrates a hybrid heuristic-plus-LLM scanning pipeline, conversation- and session-scoped risk accumulation with TTL-based decay, policy-enforced controls over tools, paths, private networks, domain tiers, and outbound secret patterns, and a tamper-evident audit and operations plane with integrity verification and hot-reloadable policy management. We outline an evaluation methodology and benchmark pipeline for measuring security effectiveness, false positives, layer contribution, runtime overhead, and operational recoverability in an agent-runtime setting, and we report current preliminary benchmark results on curated same-slice experiments and operational microbenchmarks. The system targets deployable runtime defense for real agent gateways rather than benchmark-only detection.
+\end{abstract}
+
+\paragraph{Keywords.}
+LLM agents; runtime security; prompt injection; tool governance; defense in depth; audit logging.
+
+\input{sections/introduction}
+\input{sections/background-threat-model}
+\input{sections/system-design}
+\input{sections/implementation}
+\input{sections/evaluation}
+\input{sections/related-work}
+\input{sections/discussion-limitations}
+\input{sections/conclusion}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,16 @@
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.pdf
+main - Copy.pdf
+
+result-source-mapping.md
+generated/README.md
+generated/paper-main-draft-pandoc.tex
+generated/preliminary-main-results-*

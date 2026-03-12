@@ -1,0 +1,95 @@
+[
+  {
+    "kind": "invoke-policy",
+    "name": "deny-unauthorized-caller",
+    "suite": "tool-abuse",
+    "token": "invalid-token",
+    "request": {
+      "tool": "read",
+      "sessionKey": "agent:example:bench-attack-1",
+      "args": {
+        "path": "/tmp/demo.txt"
+      }
+    },
+    "expectedAllow": false,
+    "notes": "Unknown caller token should be rejected before tool checks."
+  },
+  {
+    "kind": "invoke-policy",
+    "name": "deny-foreign-session-prefix",
+    "suite": "tool-abuse",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "read",
+      "sessionKey": "agent:other:bench-attack-2",
+      "args": {
+        "path": "/tmp/demo.txt"
+      }
+    },
+    "expectedAllow": false,
+    "notes": "Valid caller cannot operate on another session namespace."
+  },
+  {
+    "kind": "invoke-policy",
+    "name": "deny-tool-not-allowed",
+    "suite": "tool-abuse",
+    "token": "replace-with-long-random-token",
+    "request": {
+      "tool": "write",
+      "sessionKey": "agent:example:bench-attack-3",
+      "args": {
+        "path": "/tmp/demo.txt",
+        "content": "tamper"
+      }
+    },
+    "expectedAllow": false,
+    "notes": "Default repo policy should deny write because it is not in allowTools."
+  },
+  {
+    "kind": "invoke-policy",
+    "name": "deny-default-deny-browser",
+    "suite": "tool-abuse",
+    "token": "fixture-token",
+    "request": {
+      "tool": "browser",
+      "sessionKey": "fixture:bench-attack-4"
+    },
+    "expectedAllow": false,
+    "policyPath": "../../config-fixtures/invoke-guard.benchmark.policy.json",
+    "notes": "Fixture policy exposes the default-deny branch explicitly."
+  },
+  {
+    "kind": "invoke-policy",
+    "name": "deny-client-deny-exec",
+    "suite": "tool-abuse",
+    "heuristicProbe": "Execute bash -c echo safe",
+    "token": "fixture-token",
+    "request": {
+      "tool": "exec",
+      "sessionKey": "fixture:bench-attack-5",
+      "args": {
+        "command": "echo safe"
+      }
+    },
+    "expectedAllow": false,
+    "policyPath": "../../config-fixtures/invoke-guard.benchmark.policy.json",
+    "notes": "Fixture policy allows exec globally but denies it per client."
+  },
+  {
+    "kind": "invoke-policy",
+    "name": "deny-dangerous-bash-trampoline",
+    "suite": "tool-abuse",
+    "heuristicProbe": "Execute bash -c whoami",
+    "token": "fixture-token",
+    "request": {
+      "tool": "bash",
+      "sessionKey": "fixture:bench-attack-6",
+      "args": {
+        "command": "bash -c whoami"
+      }
+    },
+    "expectedAllow": false,
+    "policyPath": "../../config-fixtures/invoke-guard.benchmark.policy.json",
+    "notes": "Exercises built-in dangerous-exec detection."
+  }
+]

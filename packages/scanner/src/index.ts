@@ -3,12 +3,43 @@ import http from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { heuristicScan } from "@kyaclaw/shared/heuristics";
 
-const HOST = process.env.SCANNER_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.SCANNER_PORT ?? "18766");
-const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://127.0.0.1:11434/api/generate";
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen3:30b";
 const MAX_TEXT = 30_000;
-const TIMEOUT_MS = 3_000;
+const DEFAULT_TIMEOUT_MS = 3_000;
+const DEFAULT_TEMPERATURE = 0;
+
+function getScannerHost(): string {
+  return process.env.SCANNER_HOST ?? "127.0.0.1";
+}
+
+function getScannerPort(): number {
+  return Number(process.env.SCANNER_PORT ?? "18766");
+}
+
+function getOllamaUrl(): string {
+  return process.env.OLLAMA_URL ?? "http://127.0.0.1:11434/api/generate";
+}
+
+function getOllamaModel(): string {
+  return process.env.OLLAMA_MODEL ?? "qwen3:30b";
+}
+
+function getOllamaTimeoutMs(): number {
+  const parsed = Number(process.env.OLLAMA_TIMEOUT_MS ?? `${DEFAULT_TIMEOUT_MS}`);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
+}
+
+function getOllamaTemperature(): number {
+  const parsed = Number(process.env.OLLAMA_TEMPERATURE ?? `${DEFAULT_TEMPERATURE}`);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_TEMPERATURE;
+}
+
+function getOllamaSeed(): number | null {
+  const raw = process.env.OLLAMA_SEED;
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return null;
+  return parsed;
+}
 
 function json(res: http.ServerResponse, status: number, payload: unknown) {
   res.statusCode = status;
@@ -38,19 +69,23 @@ async function ollamaJudge(
   text: string,
 ): Promise<{ verdict: string; score: number; reasons: string[] }> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), getOllamaTimeoutMs());
+  const seed = getOllamaSeed();
   try {
-    const resp = await fetch(OLLAMA_URL, {
+    const resp = await fetch(getOllamaUrl(), {
       method: "POST",
       headers: { "content-type": "application/json" },
       signal: ctrl.signal,
       body: JSON.stringify({
-        model: OLLAMA_MODEL,
+        model: getOllamaModel(),
         stream: false,
         prompt:
           `Classify prompt injection risk. Return ONLY JSON: {"verdict":"benign|suspicious|malicious","score":0-100,"reasons":["..."]}\n\nText:\n` +
           text.slice(0, MAX_TEXT),
-        options: { temperature: 0.1 },
+        options: {
+          temperature: getOllamaTemperature(),
+          ...(seed === null ? {} : { seed }),
+        },
       }),
     });
     if (!resp.ok) throw new Error(`ollama ${resp.status}`);
@@ -75,25 +110,85 @@ async function ollamaJudge(
   }
 }
 
-export async function classify(text: string) {
+export type ScannerPath = "heuristic-shortcircuit" | "ollama-assisted" | "heuristic-fallback";
+
+export type ScannerResult = {
+  verdict: "benign" | "suspicious" | "malicious";
+  score: number;
+  reasons: string[];
+  path: ScannerPath;
+  heuristicScore: number;
+  heuristicSuspicious: boolean;
+  modelVerdict: "benign" | "suspicious" | "malicious" | null;
+  modelScore: number | null;
+  modelUsed: boolean;
+};
+
+export async function classify(text: string): Promise<ScannerResult> {
   const h = heuristicScan(text);
   if (h.score >= 70)
-    return { verdict: "malicious" as const, score: h.score, reasons: h.reasons };
+    return {
+      verdict: "malicious" as const,
+      score: h.score,
+      reasons: h.reasons,
+      path: "heuristic-shortcircuit",
+      heuristicScore: h.score,
+      heuristicSuspicious: h.suspicious,
+      modelVerdict: null,
+      modelScore: null,
+      modelUsed: false,
+    };
 
   try {
     const m = await ollamaJudge(text);
     const score = Math.max(h.score, m.score);
     const reasons = [...new Set([...h.reasons, ...m.reasons])];
     if (m.verdict === "malicious" || score >= 75)
-      return { verdict: "malicious" as const, score, reasons };
+      return {
+        verdict: "malicious" as const,
+        score,
+        reasons,
+        path: "ollama-assisted",
+        heuristicScore: h.score,
+        heuristicSuspicious: h.suspicious,
+        modelVerdict: m.verdict === "malicious" || m.verdict === "suspicious" ? m.verdict : "benign",
+        modelScore: m.score,
+        modelUsed: true,
+      };
     if (m.verdict === "suspicious" || score >= 35)
-      return { verdict: "suspicious" as const, score, reasons };
-    return { verdict: "benign" as const, score, reasons };
+      return {
+        verdict: "suspicious" as const,
+        score,
+        reasons,
+        path: "ollama-assisted",
+        heuristicScore: h.score,
+        heuristicSuspicious: h.suspicious,
+        modelVerdict: m.verdict === "malicious" || m.verdict === "suspicious" ? m.verdict : "benign",
+        modelScore: m.score,
+        modelUsed: true,
+      };
+    return {
+      verdict: "benign" as const,
+      score,
+      reasons,
+      path: "ollama-assisted",
+      heuristicScore: h.score,
+      heuristicSuspicious: h.suspicious,
+      modelVerdict: m.verdict === "malicious" || m.verdict === "suspicious" ? m.verdict : "benign",
+      modelScore: m.score,
+      modelUsed: true,
+    };
   } catch {
     return {
       verdict: h.suspicious ? ("suspicious" as const) : ("benign" as const),
       score: h.score,
       reasons: h.reasons,
+      path: "heuristic-fallback",
+      heuristicScore: h.score,
+      heuristicSuspicious: h.suspicious,
+      modelVerdict: null,
+      modelScore: null,
+      modelUsed: false,
     };
   }
 }
@@ -139,7 +234,9 @@ if (isMainModule || process.env.PRISM_SCANNER_START) {
     process.exit(1);
   }
   const server = createServer();
-  server.listen(PORT, HOST, () => {
-    process.stdout.write(`[scanner] http://${HOST}:${PORT}\n`);
+  const port = getScannerPort();
+  const host = getScannerHost();
+  server.listen(port, host, () => {
+    process.stdout.write(`[scanner] http://${host}:${port}\n`);
   });
 }

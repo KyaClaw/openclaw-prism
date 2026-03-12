@@ -1,0 +1,27 @@
+{
+  "host": "127.0.0.1",
+  "port": 0,
+  "upstreamUrl": "http://127.0.0.1:19999",
+  "upstreamTokenEnv": "TEST_UPSTREAM_TOKEN",
+  "defaultDenyTools": [
+    "browser"
+  ],
+  "clients": [
+    {
+      "id": "fixture-client",
+      "token": "fixture-token",
+      "allowedSessionPrefixes": [
+        "fixture:"
+      ],
+      "allowTools": [
+        "read",
+        "exec",
+        "browser",
+        "bash"
+      ],
+      "denyTools": [
+        "exec"
+      ]
+    }
+  ]
+}
